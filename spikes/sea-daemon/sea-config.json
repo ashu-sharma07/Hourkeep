@@ -1,0 +1,6 @@
+{
+  "main": "daemon.cjs",
+  "output": "daemon.blob",
+  "disableExperimentalSEAWarning": true,
+  "execArgv": ["--disable-warning=ExperimentalWarning"]
+}

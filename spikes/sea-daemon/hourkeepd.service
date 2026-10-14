@@ -1,0 +1,30 @@
+[Unit]
+Description=Hourkeep daemon (M0 spike)
+After=local-fs.target
+
+[Service]
+Type=notify
+# Node cannot send datagrams to NOTIFY_SOCKET itself; the systemd-notify child process does.
+NotifyAccess=all
+ExecStart=/usr/local/bin/hourkeepd
+Restart=always
+RestartSec=1
+WatchdogSec=4
+TimeoutStopSec=5
+RuntimeDirectory=hourkeep
+RuntimeDirectoryMode=0755
+StateDirectory=hourkeep
+# Hardening candidates for the real unit
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/etc
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=multi-user.target

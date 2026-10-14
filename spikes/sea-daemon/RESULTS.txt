@@ -1,0 +1,46 @@
+systemd state: running
+--- environment
+PRETTY_NAME="Ubuntu 24.04.5 LTS"
+NAME="Ubuntu"
+ldd (Ubuntu GLIBC 2.39-0ubuntu8.9) 2.39
+node: NOT installed
+-rwxr-xr-x 1 root root 103M Oct 14 08:14 /usr/local/bin/hourkeepd
+--- 1. service starts as Type=notify and is active
+PASS: unit active
+PASS: no node binary on PATH
+Type=notify
+NotifyAccess=all
+WatchdogUSec=4s
+MainPID=57
+--- 2. socket permissions
+srw-rw---- root:hourkeep /run/hourkeep/hourkeep.sock
+PASS: socket is 0660 root:hourkeep
+PASS: root can ping
+PASS: group member can ping
+ping failed: EACCES
+PASS: outsider is denied
+ping response:
+{"ok":true,"op":"ping","pid":57,"node":"v22.23.3","sqlite":"3.51.3","boots":1,"atomicWrite":"ok","execArgv":["--disable-warning=ExperimentalWarning"]}
+--- 3. node:sqlite inside SEA, warning silenced
+PASS: daemon logged startup
+PASS: no ExperimentalWarning in journal
+PASS: atomic write under ProtectSystem=strict + ReadWritePaths=/etc
+PASS: atomic write visible on real fs
+--- 4. crash recovery (SIGKILL) and state persistence
+PASS: restarted with new pid (57 -> 259)
+PASS: sqlite state survived restart (boots 1 -> 2)
+--- 5. watchdog (event loop hang -> systemd restarts)
+PASS: watchdog replaced hung process (259 -> 350)
+Oct 14 08:17:46 1db505523071 systemd[1]: hourkeepd.service: Watchdog timeout (limit 4s)!
+Oct 14 08:17:46 1db505523071 systemd[1]: hourkeepd.service: Failed with result 'watchdog'.
+Oct 14 08:17:47 1db505523071 hourkeepd[350]: watchdog enabled: ping every 2000ms
+--- 6. graceful stop
+PASS: socket removed on stop
+--- 7. hardening score (systemd-analyze security)
+→ Overall exposure level for hourkeepd.service: 7.7 EXPOSED :-(
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+NoNewPrivileges=yes
+
+RESULT: 14 passed, 0 failed
