@@ -1,0 +1,13 @@
+node_modules/
+dist/
+build/
+.turbo/
+coverage/
+*.log
+*.tsbuildinfo
+.env
+.env.*
+spikes/**/out/
+.DS_Store
+# Local planning material, not part of the repo
+Hourkeep Agent Kickoff Pack.md
