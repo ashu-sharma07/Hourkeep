@@ -1,0 +1,26 @@
+{
+  "name": "@hourkeep/daemon",
+  "version": "0.0.0",
+  "private": true,
+  "description": "hourkeepd: the root enforcement daemon",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hourkeep/ipc": "workspace:*",
+    "@hourkeep/core": "workspace:*",
+    "@hourkeep/platform": "workspace:*"
+  }
+}
