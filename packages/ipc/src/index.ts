@@ -1,2 +1,12 @@
-/** IPC protocol version carried in every message. */
-export const PROTOCOL_VERSION = 1;
+export * from './protocol.js';
+export { FrameTooLargeError, LineDecoder, encodeMessage } from './framing.js';
+export { IpcClientError, call, type ClientErrorKind, type RequestOptions } from './client.js';
+export {
+  createIpcServer,
+  type HandlerResult,
+  type IpcServer,
+  type IpcServerOptions,
+  type PeerInfo,
+  type RequestContext,
+  type RequestHandler,
+} from './server.js';
