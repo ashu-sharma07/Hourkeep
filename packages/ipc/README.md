@@ -4,15 +4,31 @@ The wire protocol between `hourkeepd` and its clients: Zod schemas, framing and 
 
 Depends on `zod` (runtime validation of every message, required by the spec).
 
-## Protocol (version 1)
+## Protocol (version 2)
 
 Newline-delimited JSON over a Unix socket. Every message is at most 64 KiB; longer input is cut off with `too_large`.
 
-Request: `{ "v": 1, "id": "<1-64 chars>", "op": "status" | "list" | "block" | "unblock", "target"?: string }`
+Request: `{ "v": 2, "id": "<1-64 chars>", "op": "<operation>", ...fields }`
 
-Response: `{ "v": 1, "id": "...", "ok": true, "data": ... }` or `{ ..., "ok": false, "error": { "code", "message" } }`
+Response: `{ "v": 2, "id": "...", "ok": true, "data": ... }` or `{ ..., "ok": false, "error": { "code", "message" } }`
 
-All schemas are strict: unknown fields are rejected. A request with another `v` gets `unsupported_version`. Error codes: `bad_request`, `unsupported_version`, `too_large`, `invalid_target`, `not_found`, `internal`.
+Operations:
+
+| op                                                      | fields                        | data                                               |
+| ------------------------------------------------------- | ----------------------------- | -------------------------------------------------- |
+| `status`, `list`                                        |                               | daemon state; rules with schedule, limit and state |
+| `block`                                                 | `target`                      | rule added (tightening, instant)                   |
+| `unblock`                                               | `target`                      | change outcome                                     |
+| `schedule_set`, `schedule_clear`                        | `target`, `schedule`          | change outcome                                     |
+| `limit_set`                                             | `target`, `minutes` (or null) | change outcome                                     |
+| `settings_get`, `settings_set`                          | `key`, `value`                | settings; change outcome                           |
+| `pass_start`, `pass_end`                                | `target`                      | change outcome                                     |
+| `pending_list`                                          |                               | pending changes                                    |
+| `pending_cancel`, `pending_challenge`, `pending_answer` | `changeId` (+ `response`)     | message; challenge; applied or wrong               |
+
+A change outcome is `applied`, `noop`, or `pending` with the pending change (cooldown and expiry times, phase, attempts left). Tightening is applied at once; loosening is always `pending`. Challenges never contain the answer.
+
+All schemas are strict: unknown fields are rejected. A request with another `v` gets `unsupported_version`. Error codes: `bad_request`, `unsupported_version`, `too_large`, `invalid_target`, `invalid_value`, `not_found`, `cooldown_active`, `too_early`, `expired`, `limit_reached`, `internal`.
 
 ## Public API
 

@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { IpcClientError, call } from './client.js';
+import { PROTOCOL_VERSION } from './protocol.js';
 import { createIpcServer, type IpcServer, type RequestHandler } from './server.js';
 
 let dir: string;
@@ -25,7 +26,10 @@ afterEach(async () => {
 
 const statusData = {
   daemonVersion: 't',
-  protocol: 1 as const,
+  protocol: PROTOCOL_VERSION,
+  pendingCount: 0,
+  passesUsedToday: 0,
+  passesPerDay: 3,
   dryRun: true,
   ruleCount: 0,
   blockedDomainCount: 0,
@@ -119,7 +123,7 @@ describe('ipc client and server', () => {
   it('answers pipelined requests on one connection in order', async () => {
     await start();
     const lines =
-      [1, 2, 3].map((n) => JSON.stringify({ v: 1, id: `r${n}`, op: 'status' })).join('\n') + '\n';
+      [1, 2, 3].map((n) => JSON.stringify({ v: PROTOCOL_VERSION, id: `r${n}`, op: 'status' })).join('\n') + '\n';
     const out = (await raw(lines))
       .trim()
       .split('\n')
@@ -144,7 +148,7 @@ describe('ipc client and server', () => {
       let calls = 0;
       await start({ handler: async (...a) => (calls++, handler(...a)) });
       const out = JSON.parse(
-        await raw(JSON.stringify({ v: 1, id: 'a', op: 'status', admin: true }) + '\n'),
+        await raw(JSON.stringify({ v: PROTOCOL_VERSION, id: 'a', op: 'status', admin: true }) + '\n'),
       );
       expect(out).toMatchObject({ ok: false, error: { code: 'bad_request' } });
       expect(calls).toBe(0);
@@ -154,9 +158,9 @@ describe('ipc client and server', () => {
       await start();
       const out = (
         await raw(
-          JSON.stringify({ v: 1, id: 'a', op: 'nope' }) +
+          JSON.stringify({ v: PROTOCOL_VERSION, id: 'a', op: 'nope' }) +
             '\n' +
-            JSON.stringify({ v: 1, id: 'b', op: 'status' }) +
+            JSON.stringify({ v: PROTOCOL_VERSION, id: 'b', op: 'status' }) +
             '\n',
         )
       )
@@ -238,7 +242,7 @@ describe('ipc client and server', () => {
 
     it('rejects replies that do not match the schema', async () => {
       const fake = net.createServer((c) =>
-        c.on('data', () => c.write('{"v":1,"id":"","ok":true,"data":{}}\n')),
+        c.on('data', () => c.write(`{"v":${PROTOCOL_VERSION},"id":"","ok":true,"data":{}}\n`)),
       );
       await new Promise<void>((r) => fake.listen(sock, r));
       try {
@@ -253,7 +257,7 @@ describe('ipc client and server', () => {
         c.on('data', () =>
           c.write(
             JSON.stringify({
-              v: 1,
+              v: PROTOCOL_VERSION,
               id: 'other',
               ok: true,
               data: { ...statusData, callerUid: null },
