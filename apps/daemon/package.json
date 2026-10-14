@@ -22,5 +22,8 @@
     "@hourkeep/ipc": "workspace:*",
     "@hourkeep/core": "workspace:*",
     "@hourkeep/platform": "workspace:*"
+  },
+  "bin": {
+    "hourkeepd": "./dist/main.js"
   }
 }
