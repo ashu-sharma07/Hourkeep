@@ -26,7 +26,7 @@ afterEach(async () => {
 
 const statusData = {
   daemonVersion: 't',
-  protocol: PROTOCOL_VERSION,
+  protocol: PROTOCOL_VERSION as typeof PROTOCOL_VERSION,
   pendingCount: 0,
   passesUsedToday: 0,
   passesPerDay: 3,
