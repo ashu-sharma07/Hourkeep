@@ -46,15 +46,63 @@ PASS: rules survive a crash
 PASS: stopping the daemon leaves the block in place
 PASS: on start the daemon re-applies stored rules immediately
 PASS: ...and does not count that as tampering
-=== 5. unblock and uninstall cleanup
-PASS: unblock is instant
+=== 5. loosening needs cooldown and challenge; tightening does not
+PASS: unblock does not unblock: it explains the cooldown
+PASS: the block is still in place right after 'unblock'
+PASS: asking again returns the same pending change (one open request)
+PASS: pending lists it with a cooldown
+PASS: confirming before the cooldown ends is refused
+PASS: still blocked after the refused attempt
+PASS: a wrong answer does not unblock
+PASS: cancelling works and the id is dead afterwards
+PASS: cancelled request left the block in place
+PASS: nothing is pending after the cancel
+PASS: after the cooldown the right answer applies the change
 PASS: hosts file back to the original
+PASS: the same id cannot be used twice
 PASS: no leftover temp files in /etc
+PASS: an outsider cannot request or confirm anything
+PASS: the database and its challenge answers are not readable by users
 PASS: plain domain blocks example.com and www.example.com
 PASS: wildcard is refused with a clear error
 PASS: unknown group is refused and lists known groups
+=== 6. pending changes survive restarts, even mid-challenge
+PASS: a request made before a restart is still pending after it
+PASS: the same challenge is returned after a restart
+PASS: the challenge JSON shows no answer field
+PASS: and it can still be answered
+PASS: example.com is unblocked, youtube still blocked
+=== 7. schedules follow the real clock
+PASS: a schedule that shrinks coverage is a pending change, not applied
+PASS: confirming applies it
+PASS: outside its window the block is lifted (0s)
+PASS: list says it is not blocking now
+PASS: that lifting was not counted as tampering
+PASS: widening the schedule is instant and blocks again
+PASS: when its window opens the block appears by itself (86s)
+PASS: ...still without any tamper event
+PASS: clearing the schedule is instant
+=== 8. temporary passes and daily limits
+PASS: a pass is requested, not granted
+PASS: a pass is ready at once (no cooldown) but needs the challenge
+PASS: answering the challenge suspends the block
+PASS: list shows the running pass
+PASS: status counts the pass
+PASS: other rules keep blocking during a pass
+PASS: the pass runs out by itself and the block returns (63s)
+PASS: ...without a tamper event
+PASS: ending a pass early is instant
+PASS: a limit of 0 forbids passes for the rule (lowering is instant)
+PASS: removing a limit is loosening: it waits
+PASS: a rule with its limit left alone still blocks
+=== 9. the cooldown is itself protected
+PASS: raising the cooldown is instant
+PASS: a new request now waits two minutes
+PASS: shortening the cooldown is itself a pending change
+PASS: changing the timezone is loosening too
+=== 10. uninstall cleanup
 PASS: 'hourkeepd --teardown' removes the block
-=== 6. hardening
+=== 11. hardening
   CapabilityBoundingSet=cap_chown cap_dac_override cap_fowner
   PrivateTmp=yes
   ProtectHome=yes
@@ -63,4 +111,4 @@ PASS: 'hourkeepd --teardown' removes the block
   → Overall exposure level for hourkeepd.service: 3.9 OK :-)
 PASS: still works under the hardened unit
 
-RESULT: 44 passed, 0 failed
+RESULT: 87 passed, 0 failed

@@ -1,6 +1,4 @@
-# Browser bypass check, 2026-10-14. Debian 12 container, Playwright 1.64.0 bundled browsers:
-#   chromium-1248
-#   firefox-1555
+# Browser bypass check, 2026-10-14, after M2. Debian 12 container, Playwright 1.64.0 bundled browsers: chromium-1248, firefox-1555
 building images (first run downloads browsers, a few minutes)...
 Debian GNU/Linux 12 (bookworm)
 
@@ -34,7 +32,7 @@ PASS  firefox / private window  (control reachable)
 ALL OK (baseline)
 
 === hourkeep block youtube
-Blocked youtube (group). 25 domains are now blocked.
+Blocked youtube (group). 25 domains are blocked right now.
 
 === blocked: YouTube must be unreachable in every window; control site still reachable
 PASS  chromium / normal window  (control reachable)
@@ -81,8 +79,12 @@ PASS  firefox / DoH forced + network.trr.exclude-etc-hosts=false  (control reach
 INFO  DoH forced, default prefs: 0/4 YouTube URLs reachable (Using DNS over HTTPS (DoH) Yes)
 INFO  DoH forced + network.trr.exclude-etc-hosts=false: 0/4 YouTube URLs reachable (Using DNS over HTTPS (DoH) Yes)
 
+=== hourkeep unblock youtube: cooldown, then challenge
+pending change #1; still blocked during the cooldown:
+"code":"cooldown_active"
+Stopped blocking youtube.
+
 === after unblock: browsers must reach YouTube again
-Unblocked youtube (group). 0 domains are still blocked.
 PASS  chromium / normal window  (control reachable)
         REACHED   https://www.youtube.com/  HTTP 200 "YouTube"
         REACHED   https://m.youtube.com/  HTTP 200 "YouTube"

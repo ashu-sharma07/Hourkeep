@@ -20,6 +20,10 @@ COPY e2e/browsers/check.mjs /opt/browsers/check.mjs
 COPY --from=hk-e2e /usr/bin/hourkeepd /usr/bin/hourkeep /usr/bin/
 COPY --from=hk-e2e /usr/lib/hourkeep/peercred.node /usr/lib/hourkeep/peercred.node
 COPY packaging/systemd/hourkeepd.service /etc/systemd/system/hourkeepd.service
+# Short cooldown and challenge waits so the unblock step takes seconds (seeds the database only).
+RUN mkdir -p /etc/systemd/system/hourkeepd.service.d \
+ && printf '[Service]\nExecStart=\nExecStart=/usr/bin/hourkeepd --cooldown-seconds 3 --challenge-kinds typing,arithmetic,reflection --reflection-wait-seconds 2 --min-answer-seconds 1\n' \
+      > /etc/systemd/system/hourkeepd.service.d/e2e.conf
 RUN systemctl enable hourkeepd.service \
  && systemctl mask systemd-udevd.service systemd-udevd-kernel.socket systemd-udevd-control.socket \
       systemd-modules-load.service sys-kernel-debug.mount sys-kernel-tracing.mount getty.target console-getty.service

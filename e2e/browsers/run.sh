@@ -32,8 +32,16 @@ xu sh -c 'cd /opt/browsers && node check.mjs blocked' || rc=1
 echo; echo "=== known limitation probe: Firefox with DNS-over-HTTPS forced (informational, not asserted)"
 xu sh -c 'cd /opt/browsers && node check.mjs doh'
 
+echo; echo "=== hourkeep unblock youtube: cooldown, then challenge"
+id=$(xu hourkeep --json unblock youtube | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+echo "pending change #$id; still blocked during the cooldown:"
+xu hourkeep confirm "$id" --json | grep -o '"code":"[a-z_]*"'
+sleep 4
+ch=$(xu hourkeep confirm "$id" --json)
+ans=$(printf '%s' "$ch" | python3 e2e/solve.py)
+sleep 3
+xu hourkeep confirm "$id" --answer "$ans" | head -1
 echo; echo "=== after unblock: browsers must reach YouTube again"
-xu hourkeep unblock youtube | head -1
 xu sh -c 'cd /opt/browsers && node check.mjs baseline' || rc=1
 echo; [ $rc -eq 0 ] && echo "BROWSER CHECK: OK" || echo "BROWSER CHECK: FAILED"
 exit $rc
