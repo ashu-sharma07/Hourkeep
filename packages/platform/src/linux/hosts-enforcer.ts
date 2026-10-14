@@ -34,19 +34,20 @@ export class HostsFileEnforcer implements PlatformEnforcer {
     const state = findBlock(current);
     const desiredBlock = blocked.length === 0 ? '' : renderBlock(blocked);
 
-    let tamper: TamperKind | null = null;
     let drifted: boolean;
+    let kind: TamperKind;
     if (state.kind === 'malformed') {
       drifted = true;
-      tamper = 'malformed';
+      kind = 'malformed';
     } else if (state.kind === 'absent') {
       drifted = desiredBlock !== '';
-      tamper = drifted ? 'removed' : null;
+      kind = 'removed';
     } else {
       drifted = state.block !== desiredBlock;
-      tamper = drifted ? 'modified' : null;
+      kind = 'modified';
     }
-    if (intent === 'update') tamper = null;
+    // Only the periodic check treats a mismatch as someone else's change.
+    const tamper: TamperKind | null = drifted && intent === 'verify' ? kind : null;
 
     const blockedCount = blocked.length;
     if (!drifted) return { drifted, tamper, written: false, method: null, blockedCount };
