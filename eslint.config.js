@@ -8,6 +8,11 @@ export default tseslint.config(
   ...tseslint.configs.strict,
   prettier,
   {
+    // Plain Node scripts (e2e tooling) have no TypeScript types to supply globals.
+    files: ['**/*.mjs'],
+    languageOptions: { globals: { process: 'readonly', console: 'readonly' } },
+  },
+  {
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
     },
