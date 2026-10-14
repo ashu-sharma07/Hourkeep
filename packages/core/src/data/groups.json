@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "dataVersion": "2026-10-14.1",
+  "verifiedOn": "2026-10-14",
+  "groups": [
+    {
+      "id": "youtube",
+      "name": "YouTube",
+      "description": "YouTube web, music, kids, thumbnails and video delivery hosts that can be listed explicitly.",
+      "domains": [
+        "youtube.com",
+        "www.youtube.com",
+        "m.youtube.com",
+        "music.youtube.com",
+        "studio.youtube.com",
+        "kids.youtube.com",
+        "tv.youtube.com",
+        "gaming.youtube.com",
+        "img.youtube.com",
+        "youtu.be",
+        "youtube-nocookie.com",
+        "www.youtube-nocookie.com",
+        "youtubeeducation.com",
+        "youtubei.googleapis.com",
+        "youtube.googleapis.com",
+        "i.ytimg.com",
+        "i1.ytimg.com",
+        "i2.ytimg.com",
+        "i3.ytimg.com",
+        "i4.ytimg.com",
+        "i9.ytimg.com",
+        "s.ytimg.com",
+        "yt3.ggpht.com",
+        "googlevideo.com",
+        "redirector.googlevideo.com"
+      ],
+      "notes": [
+        "Hosts files have no wildcards. Video bytes are served from many hosts such as rN---sn-xxxx.googlevideo.com that cannot be listed, so playback of an already-loaded page may continue until the DNS layer (M3).",
+        "ytimg.com (apex) returns NXDOMAIN on the verification date, so it is not listed.",
+        "accounts.youtube.com and consent.youtube.com are deliberately NOT listed: they are shared Google sign-in and consent endpoints and blocking them would break unrelated Google services.",
+        "www.youtu.be returns NXDOMAIN and is not listed."
+      ]
+    }
+  ]
+}
