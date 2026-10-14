@@ -49,6 +49,8 @@ pnpm test
 pnpm lint
 ```
 
+Spike results (SQLite driver, single-binary packaging under systemd, peer credentials) are in `spikes/*/RESULTS.txt` and summarised in `docs/DECISIONS.md`. Each spike runs in Docker, for example `spikes/sea-daemon/run-test.sh`.
+
 Tests and spikes must never touch the real `/etc/hosts`, firewall or systemd of the host. Anything that needs real system changes runs inside Docker.
 
 ## License
