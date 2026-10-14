@@ -1,6 +1,2 @@
-import { PROTOCOL_VERSION } from '@hourkeep/ipc';
-
-/** Version line. Placeholder until M1. */
-export function versionLine(): string {
-  return `hourkeep (protocol v${PROTOCOL_VERSION})`;
-}
+export { CLI_VERSION, DEFAULT_SOCKET, realIo, runCli, type CliIo } from './cli.js';
+export { ago, formatBlock, formatList, formatStatus, formatUnblock } from './format.js';
