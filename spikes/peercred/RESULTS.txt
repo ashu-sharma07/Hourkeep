@@ -1,0 +1,14 @@
+== addon size: 16080 bytes; needs only libc: 	linux-vdso.so.1 (0x00007e57aa059000) 	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007e57a9e64000) 	/lib64/ld-linux-x86-64.so.2 (0x00007e57aa05b000) 
+
+== 1. plain node server. client as root, then as member (uid 1001)
+{"fd":19,"addon":{"pid":26,"uid":0,"gid":0,"us":35},"ss":{"pid":26,"uid":null,"peerIno":113305,"us":3430}}
+{"fd":20,"addon":{"pid":36,"uid":1001,"gid":1001,"us":11},"ss":{"pid":null,"uid":null,"peerIno":114628,"us":2087}}
+-- fire-and-forget client (exits before the server inspects it)
+{"fd":21,"addon":{"pid":46,"uid":1001,"gid":1001,"us":15},"ss":{"pid":null,"uid":null,"peerIno":112186,"us":2758}}
+
+== 2. same server as SEA binary (addon is a sidecar loaded with process.dlopen)
+Wrote single executable preparation blob to /tmp/server.blob
+{"fd":19,"addon":{"pid":86,"uid":1001,"gid":1001,"us":31},"ss":{"pid":null,"uid":null,"peerIno":111332,"us":2831}}
+
+== 3. latency of each method (50 connections)
+addon median us: 5   ss median us: 1703
