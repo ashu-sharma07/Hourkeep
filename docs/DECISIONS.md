@@ -95,3 +95,24 @@ Confirmed by the owner on 2026-10-14:
 ## 2026-10-14: M0 accepted
 
 CI (`build-test` and `docs-lint`) passed on GitHub for the M0 commits on `main`.
+
+## 2026-10-14: M1 design decisions
+
+- **Tamper semantics.** The enforcer is told why it runs. `update` (rule change, daemon start) never reports tamper. `verify` (periodic) reports any difference in the managed block, whatever its kind (`modified`, `removed`, `malformed`). So a hosts file edited while the daemon was down is re-applied at start without a tamper event; only edits seen while running count.
+- **Scope of tamper.** Only the marked block is ours. Edits elsewhere in the file are left alone. A half-deleted block is repaired and reported.
+- **Stopping the daemon leaves the block.** Removing enforcement is deliberate: `hourkeepd --teardown` (used by uninstall). Reason: a stopped daemon should not silently unblock.
+- **`unblock` is instant in M1**, as the spec allows. The code path is `Engine.unblock`, which M2 will put behind the friction state machine.
+- **`www.` is added for plain domains** (`block reddit.com` also blocks `www.reddit.com`), because hosts files have no wildcards and nearly every site answers on both. Group domains are used exactly as listed.
+- **Strict domain input.** Anything written to `/etc/hosts` goes through `normalizeDomain`: ASCII hostnames only, no whitespace, wildcards, URLs, IPs or `localhost`. This closes hosts-file line injection.
+- **YouTube group verified on 2026-10-14** with `getent`. Dropped: `ytimg.com` (apex is NXDOMAIN), `www.youtu.be` (NXDOMAIN). Added: studio, kids, tv, gaming, img, `i1-i4`/`i9`/`s.ytimg.com`, `youtubeeducation.com`, `youtube.googleapis.com`, `yt3.ggpht.com`, `redirector.googlevideo.com`, `www.youtube-nocookie.com`. Deliberately excluded: `accounts.youtube.com` and `consent.youtube.com`, which are shared Google sign-in and consent endpoints. Reasons are stored in the data file's `notes`.
+- **Peer credentials fail soft, the socket fails closed.** If the addon cannot load, caller UIDs are unknown but requests still work. If the `hourkeep` group does not exist, the socket becomes `0600` root-only and an error is logged.
+- **Watchdog is gated on health.** The daemon only pings systemd while its check loop has run recently, so a wedged daemon is restarted. Unit uses `WatchdogSec=30`.
+- **Atomic write fallback.** `rename` is used everywhere. Only `EBUSY` (Docker's bind-mounted `/etc/hosts`) falls back to an in-place rewrite, and the daemon logs which method ran. The e2e test asserts the fallback in Docker; unit tests cover the rename path.
+- **Two single-file binaries for now** (`hourkeepd`, `hourkeep`, about 104 MB each, because each embeds Node). Revisit in M5: a multi-call binary or compression would halve the download.
+- **Unit hardening.** The draft unit scores 3.9 OK in `systemd-analyze security` (the spike unit scored 7.7) and still passes all e2e checks. `MemoryDenyWriteExecute` must stay off for V8.
+- **E2E CI job is advisory** (`continue-on-error`) until it has run green on GitHub-hosted runners; it needs cgroup v2 and `SYS_ADMIN` in the container.
+- **Browser tooling.** Playwright 1.64.0 with its bundled Chromium and Firefox, isolated in `e2e/browsers` (not a workspace member). Private windows: Chromium `--incognito` and `--guest`; Firefox `browser.privatebrowsing.autostart`.
+
+## 2026-10-14: Measured, not assumed: Firefox and DoH
+
+The README used to say that browsers using DNS-over-HTTPS bypass the hosts file. In an automated test, Firefox forced to DoH-only (with the Cloudflare help page confirming "Using DNS over HTTPS: Yes") still refused to connect to blocked YouTube hosts, both with default prefs and with `network.trr.exclude-etc-hosts=false`. So the claim was too strong for Firefox and is now worded as untested for other browsers. Chrome's Secure DNS has not been tested; `docs/BROWSER-CHECKLIST.md` lists it for manual verification on a real desktop. The wildcard gap (`*.googlevideo.com`) is unaffected and remains the main hole until M3.
