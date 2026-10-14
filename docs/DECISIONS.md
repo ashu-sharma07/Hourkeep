@@ -116,3 +116,30 @@ CI (`build-test` and `docs-lint`) passed on GitHub for the M0 commits on `main`.
 ## 2026-10-14: Measured, not assumed: Firefox and DoH
 
 The README used to say that browsers using DNS-over-HTTPS bypass the hosts file. In an automated test, Firefox forced to DoH-only (with the Cloudflare help page confirming "Using DNS over HTTPS: Yes") still refused to connect to blocked YouTube hosts, both with default prefs and with `network.trr.exclude-etc-hosts=false`. So the claim was too strong for Firefox and is now worded as untested for other browsers. Chrome's Secure DNS has not been tested; `docs/BROWSER-CHECKLIST.md` lists it for manual verification on a real desktop. The wildcard gap (`*.googlevideo.com`) is unaffected and remains the main hole until M3.
+
+## 2026-10-14: M2 design (schedules, limits, friction, passes)
+
+These are the semantics M2 implements. Where the spec left room, the choice and its reason are here.
+
+**Schedule.** A rule may have a weekly schedule: per weekday, a list of minute-resolution windows, plus an IANA timezone. The schedule says when the rule is _blocking_. No schedule means always blocking. Outside the windows the site is reachable with no friction. Overnight windows (`22:00-02:00`) are stored as two windows across midnight. DST is handled by evaluating each instant in the schedule's timezone, never by adding 24 h.
+
+**Daily limit.** The hosts layer cannot observe how long you actually use a site (that needs the M3 DNS data), so M2 does not pretend to meter usage. A rule's `dailyLimit` is the maximum total minutes of temporary pass time per local day for that rule. `0` means no passes for this rule at all. No limit means only the global pass limits apply. When M3 provides real usage, the limit can start counting it without changing the CLI.
+
+**Temporary pass.** A time-boxed suspension of one rule (default 15 minutes, 3 per local day across all rules, owner-approved). Starting a pass takes a challenge but no cooldown: it is already bounded and auto-reverts. It still counts against `dailyLimit` and the daily count; ending it early does not refund the count. Minutes used are what actually elapsed.
+
+**Classification.** Tightening is instant: adding a rule, adding schedule coverage, lowering a limit, raising the cooldown, lowering passes per day or pass length, ending a pass. Loosening goes through the friction flow: removing a rule, removing any schedule coverage, raising or clearing a limit, lowering the cooldown, raising passes per day or pass length. A timezone change counts as loosening unless both schedules are always-on, because moving the timezone shifts the windows. The comparison is exact (per minute of the week), not a heuristic.
+
+**Friction state machine.** Loosening creates a pending change: `cooldown` until `cooldownEndsAt` (default 10 minutes, owner-approved), then `ready`. In `ready` the user asks for a challenge, answers it, and the change is applied. It can be cancelled any time before applying. If the challenge is not completed within 30 minutes of the cooldown ending it expires (so requests cannot be stockpiled). Three wrong answers discard that challenge and issue a fresh one. Answers sent before a challenge's minimum time are rejected without counting as an attempt. The change is re-validated when applied (the rule may be gone, limits may have been used up). A duplicate request for the same change returns the existing pending change.
+
+**Challenges** (in `core`, pluggable, random source injected for tests): `typing` (retype a 41-character random string, at least 5 s), `arithmetic` (five small problems, at least 5 s), `reflection` (wait 30 s, then explain why in at least 8 words and 40 characters). One kind is picked at random from the enabled kinds so it does not become a habit. The reflection text is stored in the event log.
+
+**Settings are protection state.** `cooldown`, `passes-per-day`, `pass-minutes` and `timezone` live in the database and change through the same classification, otherwise setting the cooldown to 1 minute would be an instant bypass. Daemon flags only provide the initial defaults when the database is first created.
+
+**Protocol v2.** `unblock` and other loosening operations now return a pending change instead of an applied result, which is incompatible with v1, so the protocol version is bumped to 2. Operations are added for schedules, limits, settings, pending changes and passes.
+
+**Effective blocking set.** Each reconcile tick computes the hostnames to block at that instant (rules whose schedule is active, minus rules with a running pass). If that set differs from the last applied one, the pass is an `update`, otherwise a `verify`, so schedule transitions and pass expiry are never reported as tampering.
+
+**Not in M2.**
+
+- Lock mode (spec section 8, optional) is left out. The pending-change machinery makes it small to add later.
+- Clock manipulation: moving the system clock forward shortens a cooldown. This needs root and is within the "determined adult with root" exclusion, but the daemon records a `clock_jump` event when wall time and monotonic time disagree by more than a minute, so it is at least visible.
