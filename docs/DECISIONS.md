@@ -83,11 +83,15 @@ Node has no API for `SO_PEERCRED`. Compared:
 
 Decision: ship `peercred.node` next to the daemon (for example `/usr/lib/hourkeep/peercred.node`) and build it per architecture in CI with `gcc`. The addon needs the file descriptor of the accepted socket. `conn._handle.fd` provides it, but it is undocumented, so M1 needs a test that fails loudly if it disappears. If the addon fails to load, the daemon logs the caller UID as unknown and keeps working, because group membership on the socket remains the primary access gate.
 
-## 2026-10-14: Owner-approved defaults for open decisions
+## 2026-10-14: Defaults for the remaining open decisions
 
-- CLI library: `commander`. Mature, typed, no surprises. `citty` is a fine alternative. Not installed yet.
+Confirmed by the owner on 2026-10-14:
+
+- CLI library: `commander`. Mature and typed. `citty` was the alternative. Not installed yet.
 - Default cooldown: 10 minutes (configurable up to hours).
 - Temporary passes: 3 per day, 15 minutes each.
 - Packaging targets: Debian/Ubuntu (`.deb`) first, then Arch (AUR), then `.rpm`.
 
-These were proposed by the agent and the owner approved the license only. Please confirm or change the rest before M2.
+## 2026-10-14: M0 accepted
+
+CI (`build-test` and `docs-lint`) passed on GitHub for the M0 commits on `main`.
