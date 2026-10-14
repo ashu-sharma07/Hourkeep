@@ -1,5 +1,14 @@
 import * as path from 'node:path';
 import { parseArgs } from 'node:util';
+import {
+  CHALLENGE_KIND_IDS,
+  DEFAULT_SETTINGS,
+  DEFAULT_TIMING,
+  isValidTimezone,
+  type ChallengeKindId,
+  type Settings,
+  type Timing,
+} from '@hourkeep/core';
 
 export interface DaemonConfig {
   /** Directory treated as `/` by the platform layer. */
@@ -12,6 +21,15 @@ export interface DaemonConfig {
   readonly reconcileIntervalMs: number;
   /** Path of the SO_PEERCRED addon, or null to run without caller UIDs. */
   readonly peercredPath: string | null;
+  /**
+   * Protection settings written to the database the first time the daemon runs. After that
+   * the database wins: they change only through the friction flow. `timezone` null means
+   * the machine's timezone at first run.
+   */
+  readonly initialSettings: Omit<Settings, 'timezone'> & { readonly timezone: string | null };
+  /** Challenge kinds that may be issued. */
+  readonly challengeKinds: readonly ChallengeKindId[];
+  readonly challengeTiming: Timing;
 }
 
 export const DEFAULT_CONFIG: DaemonConfig = {
@@ -22,6 +40,9 @@ export const DEFAULT_CONFIG: DaemonConfig = {
   stateDir: '/var/lib/hourkeep',
   reconcileIntervalMs: 5000,
   peercredPath: '/usr/lib/hourkeep/peercred.node',
+  initialSettings: { ...DEFAULT_SETTINGS, timezone: null },
+  challengeKinds: CHALLENGE_KIND_IDS,
+  challengeTiming: DEFAULT_TIMING,
 };
 
 export type Command = 'run' | 'teardown' | 'version' | 'help';
@@ -39,6 +60,17 @@ Options:
   --state-dir <dir>       where the database lives (default ${DEFAULT_CONFIG.stateDir})
   --interval-ms <n>       reconcile interval in ms, 100..3600000 (default ${DEFAULT_CONFIG.reconcileIntervalMs})
   --peercred <path>       SO_PEERCRED addon; "" to run without caller UIDs
+
+First-run defaults (stored in the database; later changes go through cooldown and challenge):
+  --cooldown-seconds <n>  initial cooldown before a loosening change can be confirmed (default 600)
+  --passes-per-day <n>    initial temporary passes per day (default 3)
+  --pass-minutes <n>      initial pass length (default 15)
+  --timezone <iana>       initial timezone for per-day counting (default: this machine's)
+
+Challenges:
+  --challenge-kinds <list>        comma separated: typing,arithmetic,reflection (default all)
+  --reflection-wait-seconds <n>   how long the reflection screen makes you wait (default 30)
+  --min-answer-seconds <n>        minimum time before a typing or arithmetic answer (default 5)
   --version, --help
 `;
 
@@ -60,6 +92,13 @@ export function parseConfig(argv: readonly string[]): { command: Command; config
         'state-dir': { type: 'string' },
         'interval-ms': { type: 'string' },
         peercred: { type: 'string' },
+        'cooldown-seconds': { type: 'string' },
+        'passes-per-day': { type: 'string' },
+        'pass-minutes': { type: 'string' },
+        timezone: { type: 'string' },
+        'challenge-kinds': { type: 'string' },
+        'reflection-wait-seconds': { type: 'string' },
+        'min-answer-seconds': { type: 'string' },
         teardown: { type: 'boolean' },
         version: { type: 'boolean' },
         help: { type: 'boolean' },
@@ -83,6 +122,35 @@ export function parseConfig(argv: readonly string[]): { command: Command; config
     }
   }
 
+  const whole = (flag: string, min: number, max: number, fallback: number): number => {
+    const raw = values[flag as keyof typeof values];
+    if (raw === undefined) return fallback;
+    const n = Number(raw);
+    if (typeof raw !== 'string' || !/^\d+$/.test(raw) || n < min || n > max) {
+      throw new ConfigError(`--${flag} must be a whole number between ${min} and ${max}`);
+    }
+    return n;
+  };
+
+  let kinds: readonly ChallengeKindId[] = DEFAULT_CONFIG.challengeKinds;
+  if (values['challenge-kinds'] !== undefined) {
+    const list = values['challenge-kinds']
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean);
+    const bad = list.find((k) => !(CHALLENGE_KIND_IDS as readonly string[]).includes(k));
+    if (list.length === 0 || bad !== undefined) {
+      throw new ConfigError(
+        `--challenge-kinds must be a comma separated list of: ${CHALLENGE_KIND_IDS.join(', ')}`,
+      );
+    }
+    kinds = [...new Set(list)] as ChallengeKindId[];
+  }
+
+  if (values.timezone !== undefined && !isValidTimezone(values.timezone)) {
+    throw new ConfigError(`--timezone: unknown timezone "${values.timezone}"`);
+  }
+
   const config: DaemonConfig = {
     root: values.root !== undefined ? abs('root', values.root) : DEFAULT_CONFIG.root,
     dryRun: values['dry-run'] ?? false,
@@ -100,6 +168,18 @@ export function parseConfig(argv: readonly string[]): { command: Command; config
           ? abs('peercred', values.peercred)
           : null
         : DEFAULT_CONFIG.peercredPath,
+    initialSettings: {
+      cooldownSeconds: whole('cooldown-seconds', 1, 43_200, DEFAULT_SETTINGS.cooldownSeconds),
+      passesPerDay: whole('passes-per-day', 0, 24, DEFAULT_SETTINGS.passesPerDay),
+      passMinutes: whole('pass-minutes', 1, 180, DEFAULT_SETTINGS.passMinutes),
+      timezone: values.timezone ?? null,
+    },
+    challengeKinds: kinds,
+    challengeTiming: {
+      reflectionWaitMs:
+        whole('reflection-wait-seconds', 0, 3600, DEFAULT_TIMING.reflectionWaitMs / 1000) * 1000,
+      minAnswerMs: whole('min-answer-seconds', 0, 600, DEFAULT_TIMING.minAnswerMs / 1000) * 1000,
+    },
   };
 
   const command: Command = values.help

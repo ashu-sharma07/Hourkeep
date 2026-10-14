@@ -4,6 +4,7 @@ import { FrameTooLargeError, LineDecoder, encodeMessage } from './framing.js';
 import {
   PROTOCOL_VERSION,
   RequestSchema,
+  ResponseData,
   peekEnvelope,
   type DataOf,
   type ErrorCode,
@@ -135,9 +136,21 @@ export async function createIpcServer(options: IpcServerOptions): Promise<IpcSer
       }
       try {
         const result = await options.handler(parsed.data, { peer });
-        if (result.ok)
-          send({ v: PROTOCOL_VERSION, id: parsed.data.id, ok: true, data: result.data });
-        else fail(parsed.data.id, result.code, result.message);
+        if (!result.ok) {
+          fail(parsed.data.id, result.code, result.message);
+          return;
+        }
+        // Never send a payload the protocol does not allow: a handler bug becomes an
+        // internal error here, not a confusing "protocol mismatch" on the client.
+        const check = ResponseData[parsed.data.op].safeParse(result.data);
+        if (!check.success) {
+          report(
+            new Error(`handler returned invalid ${parsed.data.op} data: ${check.error.message}`),
+          );
+          fail(parsed.data.id, 'internal', 'internal error');
+          return;
+        }
+        send({ v: PROTOCOL_VERSION, id: parsed.data.id, ok: true, data: result.data });
       } catch (e) {
         report(e);
         fail(parsed.data.id, 'internal', 'internal error');

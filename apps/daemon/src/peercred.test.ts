@@ -36,7 +36,10 @@ describe('SO_PEERCRED addon', () => {
           ok: true,
           data: {
             daemonVersion: 't',
-            protocol: 1,
+            protocol: 2 as const,
+            pendingCount: 0,
+            passesUsedToday: 0,
+            passesPerDay: 3,
             dryRun: true,
             ruleCount: 0,
             blockedDomainCount: 0,

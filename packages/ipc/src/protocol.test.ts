@@ -69,11 +69,54 @@ describe('RequestSchema rejects', () => {
     ['overlong target', { ...base, op: 'block', target: 'a'.repeat(254) }],
     ['status with target', { ...base, op: 'status', target: 'x' }],
     ['schedule without a schedule', { ...base, op: 'schedule_set', target: 'x.com' }],
-    ['schedule with extra day', { ...base, op: 'schedule_set', target: 'x.com', schedule: { ...schedule, days: { ...schedule.days, funday: [] } } }],
-    ['schedule missing a day', { ...base, op: 'schedule_set', target: 'x.com', schedule: { ...schedule, days: { mon: [] } } }],
-    ['schedule window out of range', { ...base, op: 'schedule_set', target: 'x.com', schedule: { ...schedule, days: { ...schedule.days, mon: [{ start: 0, end: 1441 }] } } }],
-    ['schedule window with extra field', { ...base, op: 'schedule_set', target: 'x.com', schedule: { ...schedule, days: { ...schedule.days, mon: [{ start: 0, end: 60, x: 1 }] } } }],
-    ['too many windows in a day', { ...base, op: 'schedule_set', target: 'x.com', schedule: { ...schedule, days: { ...schedule.days, mon: Array.from({ length: 25 }, () => ({ start: 0, end: 1 })) } } }],
+    [
+      'schedule with extra day',
+      {
+        ...base,
+        op: 'schedule_set',
+        target: 'x.com',
+        schedule: { ...schedule, days: { ...schedule.days, funday: [] } },
+      },
+    ],
+    [
+      'schedule missing a day',
+      {
+        ...base,
+        op: 'schedule_set',
+        target: 'x.com',
+        schedule: { ...schedule, days: { mon: [] } },
+      },
+    ],
+    [
+      'schedule window out of range',
+      {
+        ...base,
+        op: 'schedule_set',
+        target: 'x.com',
+        schedule: { ...schedule, days: { ...schedule.days, mon: [{ start: 0, end: 1441 }] } },
+      },
+    ],
+    [
+      'schedule window with extra field',
+      {
+        ...base,
+        op: 'schedule_set',
+        target: 'x.com',
+        schedule: { ...schedule, days: { ...schedule.days, mon: [{ start: 0, end: 60, x: 1 }] } },
+      },
+    ],
+    [
+      'too many windows in a day',
+      {
+        ...base,
+        op: 'schedule_set',
+        target: 'x.com',
+        schedule: {
+          ...schedule,
+          days: { ...schedule.days, mon: Array.from({ length: 25 }, () => ({ start: 0, end: 1 })) },
+        },
+      },
+    ],
     ['limit as string', { ...base, op: 'limit_set', target: 'x.com', minutes: '30' }],
     ['limit negative', { ...base, op: 'limit_set', target: 'x.com', minutes: -1 }],
     ['limit fractional', { ...base, op: 'limit_set', target: 'x.com', minutes: 1.5 }],
@@ -94,7 +137,9 @@ describe('RequestSchema rejects', () => {
   });
 
   it('does not let prototype pollution keys through', () => {
-    const msg = JSON.parse(`{"v":${PROTOCOL_VERSION},"id":"a","op":"status","__proto__":{"admin":true}}`);
+    const msg = JSON.parse(
+      `{"v":${PROTOCOL_VERSION},"id":"a","op":"status","__proto__":{"admin":true}}`,
+    );
     expect(RequestSchema.safeParse(msg).success).toBe(false);
   });
 });
@@ -119,7 +164,8 @@ describe('responses', () => {
     instructions: 'Type this',
     data: { kind: 'typing', text: 'abc' },
   };
-  const ok = (op: Op, data: unknown) => responseSchema(op).safeParse({ ...base, ok: true, data }).success;
+  const ok = (op: Op, data: unknown) =>
+    responseSchema(op).safeParse({ ...base, ok: true, data }).success;
 
   it('accepts a status reply', () => {
     expect(
@@ -141,7 +187,15 @@ describe('responses', () => {
   });
 
   it('every change operation returns a change outcome with exactly three shapes', () => {
-    for (const op of ['unblock', 'schedule_set', 'schedule_clear', 'limit_set', 'settings_set', 'pass_start', 'pass_end'] as const) {
+    for (const op of [
+      'unblock',
+      'schedule_set',
+      'schedule_clear',
+      'limit_set',
+      'settings_set',
+      'pass_start',
+      'pass_end',
+    ] as const) {
       expect(ResponseData[op]).toBe(ResponseData.unblock);
       expect(ok(op, { status: 'applied', message: 'done' })).toBe(true);
       expect(ok(op, { status: 'noop', message: 'nothing' })).toBe(true);
@@ -159,30 +213,68 @@ describe('responses', () => {
   });
 
   it('knows all five change kinds', () => {
-    expect([...CHANGE_KINDS]).toEqual(['remove_rule', 'set_schedule', 'set_limit', 'set_setting', 'start_pass']);
+    expect([...CHANGE_KINDS]).toEqual([
+      'remove_rule',
+      'set_schedule',
+      'set_limit',
+      'set_setting',
+      'start_pass',
+    ]);
   });
 
   it('validates challenges of every kind and rejects mismatched data', () => {
     expect(ok('pending_challenge', { challenge, attemptsLeft: 3 })).toBe(true);
-    expect(ok('pending_challenge', { challenge: { ...challenge, data: { kind: 'arithmetic', problems: ['1 + 1'] } }, attemptsLeft: 3 })).toBe(true);
     expect(
       ok('pending_challenge', {
-        challenge: { ...challenge, data: { kind: 'reflection', question: 'why?', minWords: 8, minChars: 40 } },
+        challenge: { ...challenge, data: { kind: 'arithmetic', problems: ['1 + 1'] } },
         attemptsLeft: 3,
       }),
     ).toBe(true);
-    expect(ok('pending_challenge', { challenge: { ...challenge, data: { kind: 'typing', problems: [] } }, attemptsLeft: 3 })).toBe(false);
-    expect(ok('pending_challenge', { challenge: { ...challenge, data: { kind: 'telepathy' } }, attemptsLeft: 3 })).toBe(false);
+    expect(
+      ok('pending_challenge', {
+        challenge: {
+          ...challenge,
+          data: { kind: 'reflection', question: 'why?', minWords: 8, minChars: 40 },
+        },
+        attemptsLeft: 3,
+      }),
+    ).toBe(true);
+    expect(
+      ok('pending_challenge', {
+        challenge: { ...challenge, data: { kind: 'typing', problems: [] } },
+        attemptsLeft: 3,
+      }),
+    ).toBe(false);
+    expect(
+      ok('pending_challenge', {
+        challenge: { ...challenge, data: { kind: 'telepathy' } },
+        attemptsLeft: 3,
+      }),
+    ).toBe(false);
   });
 
   it('never carries a secret field in a challenge', () => {
-    expect(ok('pending_challenge', { challenge: { ...challenge, secret: { text: 'abc' } }, attemptsLeft: 3 })).toBe(false);
+    expect(
+      ok('pending_challenge', {
+        challenge: { ...challenge, secret: { text: 'abc' } },
+        attemptsLeft: 3,
+      }),
+    ).toBe(false);
   });
 
   it('answers are applied or wrong', () => {
     expect(ok('pending_answer', { result: 'applied', message: 'done' })).toBe(true);
-    expect(ok('pending_answer', { result: 'wrong', hint: 'no', attemptsLeft: 2, newChallenge: null })).toBe(true);
-    expect(ok('pending_answer', { result: 'wrong', hint: 'no', attemptsLeft: 3, newChallenge: challenge })).toBe(true);
+    expect(
+      ok('pending_answer', { result: 'wrong', hint: 'no', attemptsLeft: 2, newChallenge: null }),
+    ).toBe(true);
+    expect(
+      ok('pending_answer', {
+        result: 'wrong',
+        hint: 'no',
+        attemptsLeft: 3,
+        newChallenge: challenge,
+      }),
+    ).toBe(true);
     expect(ok('pending_answer', { result: 'maybe' })).toBe(false);
   });
 
@@ -198,15 +290,28 @@ describe('responses', () => {
       passEndsAt: null,
     };
     expect(ok('list', { rules: [rule], groups: [], blockedDomains: [] })).toBe(true);
-    expect(ok('list', { rules: [{ ...rule, schedule: null }], groups: [], blockedDomains: [] })).toBe(true);
-    expect(ok('list', { rules: [{ ...rule, blockingNow: 'yes' }], groups: [], blockedDomains: [] })).toBe(false);
+    expect(
+      ok('list', { rules: [{ ...rule, schedule: null }], groups: [], blockedDomains: [] }),
+    ).toBe(true);
+    expect(
+      ok('list', { rules: [{ ...rule, blockingNow: 'yes' }], groups: [], blockedDomains: [] }),
+    ).toBe(false);
   });
 
   it('accepts every error code and rejects unknown ones', () => {
     for (const code of ERROR_CODES) {
-      expect(responseSchema('block').safeParse({ ...base, ok: false, error: { code, message: 'x' } }).success).toBe(true);
+      expect(
+        responseSchema('block').safeParse({ ...base, ok: false, error: { code, message: 'x' } })
+          .success,
+      ).toBe(true);
     }
-    expect(responseSchema('block').safeParse({ ...base, ok: false, error: { code: 'weird', message: 'x' } }).success).toBe(false);
+    expect(
+      responseSchema('block').safeParse({
+        ...base,
+        ok: false,
+        error: { code: 'weird', message: 'x' },
+      }).success,
+    ).toBe(false);
   });
 
   it('has the friction error codes clients need to tell states apart', () => {

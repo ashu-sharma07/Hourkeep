@@ -88,7 +88,11 @@ export const PendingAnswerRequest = z.strictObject({
   changeId: pendingId,
   response: z.string().max(4000),
 });
-export const PassStartRequest = z.strictObject({ ...envelope, op: z.literal('pass_start'), target });
+export const PassStartRequest = z.strictObject({
+  ...envelope,
+  op: z.literal('pass_start'),
+  target,
+});
 export const PassEndRequest = z.strictObject({ ...envelope, op: z.literal('pass_end'), target });
 
 export const RequestSchema = z.discriminatedUnion('op', [

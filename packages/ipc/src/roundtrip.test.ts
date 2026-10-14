@@ -120,10 +120,25 @@ describe('ipc client and server', () => {
     expect(String((errors[0] as Error).message)).toContain('secret internal detail');
   });
 
+  it('turns a handler result that breaks the protocol into an internal error', async () => {
+    await start({
+      // an extra field the strict schema forbids
+      handler: async () => ({
+        ok: true,
+        data: { ...statusData, callerUid: null, secret: 1 } as never,
+      }),
+    });
+    const r = await call(sock, 'status', {});
+    expect(r).toMatchObject({ ok: false, error: { code: 'internal' } });
+    expect(String((errors[0] as Error).message)).toContain('invalid status data');
+  });
+
   it('answers pipelined requests on one connection in order', async () => {
     await start();
     const lines =
-      [1, 2, 3].map((n) => JSON.stringify({ v: PROTOCOL_VERSION, id: `r${n}`, op: 'status' })).join('\n') + '\n';
+      [1, 2, 3]
+        .map((n) => JSON.stringify({ v: PROTOCOL_VERSION, id: `r${n}`, op: 'status' }))
+        .join('\n') + '\n';
     const out = (await raw(lines))
       .trim()
       .split('\n')
@@ -148,7 +163,9 @@ describe('ipc client and server', () => {
       let calls = 0;
       await start({ handler: async (...a) => (calls++, handler(...a)) });
       const out = JSON.parse(
-        await raw(JSON.stringify({ v: PROTOCOL_VERSION, id: 'a', op: 'status', admin: true }) + '\n'),
+        await raw(
+          JSON.stringify({ v: PROTOCOL_VERSION, id: 'a', op: 'status', admin: true }) + '\n',
+        ),
       );
       expect(out).toMatchObject({ ok: false, error: { code: 'bad_request' } });
       expect(calls).toBe(0);

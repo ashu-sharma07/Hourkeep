@@ -1,15 +1,20 @@
 import * as fs from 'node:fs';
+import * as net from 'node:net';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { call } from '@hourkeep/ipc';
-import { BUILTIN_GROUPS } from '@hourkeep/core';
+import { BUILTIN_GROUPS, seededRng } from '@hourkeep/core';
 import { startDaemon, lookupGid, type DaemonHandle } from './daemon.js';
 import type { Notifier } from './notify.js';
 import {
+  FakeClock,
   HOSTS_BASE,
+  MINUTE,
+  SECOND,
   makeSandbox,
   noopNotifier,
   silent,
+  solve,
   waitFor,
   type Sandbox,
 } from './test-helpers.js';
@@ -40,11 +45,14 @@ describe('hourkeepd over its socket', () => {
     expect(r).toMatchObject({
       ok: true,
       data: {
-        protocol: 1,
+        protocol: 2,
         dryRun: false,
         ruleCount: 0,
         blockedDomainCount: 0,
         tamperCount: 0,
+        pendingCount: 0,
+        passesUsedToday: 0,
+        passesPerDay: 3,
         callerUid: 1234,
       },
     });
@@ -63,6 +71,12 @@ describe('hourkeepd over its socket', () => {
 
     const l = await call(sock(), 'list', {});
     expect(l.ok && l.data.rules.map((r) => r.target)).toEqual(['youtube']);
+    expect(l.ok && l.data.rules[0]).toMatchObject({
+      schedule: null,
+      dailyLimitMinutes: null,
+      blockingNow: true,
+      passEndsAt: null,
+    });
     expect(l.ok && l.data.groups).toEqual([
       { id: 'youtube', name: 'YouTube', domainCount: BUILTIN_GROUPS.groups[0]?.domains.length },
     ]);
@@ -76,12 +90,22 @@ describe('hourkeepd over its socket', () => {
     expect(hosts()).toBe(HOSTS_BASE);
   });
 
-  it('unblock removes the entries again', async () => {
+  it('unblock does not unblock: it returns a pending change and leaves the block in place', async () => {
     await start();
     await call(sock(), 'block', { target: 'youtube' });
     const r = await call(sock(), 'unblock', { target: 'youtube' });
-    expect(r).toMatchObject({ ok: true, data: { removed: true, blockedDomainCount: 0 } });
-    expect(hosts()).toBe(HOSTS_BASE);
+    expect(r).toMatchObject({
+      ok: true,
+      data: {
+        status: 'pending',
+        change: { kind: 'remove_rule', phase: 'cooldown', summary: 'stop blocking youtube' },
+      },
+    });
+    expect(hosts()).toContain('0.0.0.0 youtube.com');
+    const p = await call(sock(), 'pending_list', {});
+    expect(p.ok && p.data.changes).toHaveLength(1);
+    const s = await call(sock(), 'status', {});
+    expect(s.ok && s.data.pendingCount).toBe(1);
   });
 
   it('reverts hand edits to the managed block within the reconcile interval', async () => {
@@ -200,6 +224,202 @@ describe('hourkeepd over its socket', () => {
 function makeCfg(over: Partial<typeof sb.config>): typeof sb.config {
   return { ...sb.config, ...over };
 }
+
+describe('the friction flow over the socket', () => {
+  let clock: FakeClock;
+  beforeEach(() => {
+    clock = new FakeClock();
+  });
+
+  const startWithClock = async () => {
+    // Long interval: the tests drive time by hand, not through the timer.
+    const cfg = {
+      ...sb.config,
+      reconcileIntervalMs: 3_600_000,
+      challengeKinds: ['typing' as const, 'arithmetic' as const],
+    };
+    return start({ clock: clock.now, bootClock: clock.now, rng: seededRng(7) }, cfg);
+  };
+
+  it('unblock, wait out the cooldown, take the challenge, and the block is lifted', async () => {
+    await startWithClock();
+    await call(sock(), 'block', { target: 'youtube' });
+    const u = await call(sock(), 'unblock', { target: 'youtube' });
+    const id = u.ok && u.data.status === 'pending' ? u.data.change.id : -1;
+    expect(id).toBeGreaterThan(0);
+
+    // too early
+    expect(await call(sock(), 'pending_challenge', { changeId: id })).toMatchObject({
+      ok: false,
+      error: { code: 'cooldown_active' },
+    });
+    expect(await call(sock(), 'pending_answer', { changeId: id, response: 'x' })).toMatchObject({
+      ok: false,
+      error: { code: 'cooldown_active' },
+    });
+
+    clock.advance(10 * MINUTE);
+    const c = await call(sock(), 'pending_challenge', { changeId: id });
+    if (!c.ok) throw new Error(c.error.message);
+    expect(c.data.attemptsLeft).toBe(3);
+    expect(JSON.stringify(c.data)).not.toContain('secret');
+
+    clock.advance(10 * SECOND);
+    const wrong = await call(sock(), 'pending_answer', { changeId: id, response: 'nope' });
+    expect(wrong).toMatchObject({
+      ok: true,
+      data: { result: 'wrong', attemptsLeft: 2, newChallenge: null },
+    });
+    expect(hosts()).toContain('0.0.0.0 youtube.com');
+
+    const right = await call(sock(), 'pending_answer', {
+      changeId: id,
+      response: solve(c.data.challenge),
+    });
+    expect(right).toMatchObject({
+      ok: true,
+      data: { result: 'applied', message: 'Stopped blocking youtube.' },
+    });
+    expect(hosts()).toBe(HOSTS_BASE);
+    const l = await call(sock(), 'list', {});
+    expect(l.ok && l.data.rules).toEqual([]);
+  });
+
+  it('a pending change can be cancelled over the socket', async () => {
+    await startWithClock();
+    await call(sock(), 'block', { target: 'youtube' });
+    const u = await call(sock(), 'unblock', { target: 'youtube' });
+    const id = u.ok && u.data.status === 'pending' ? u.data.change.id : -1;
+    expect(await call(sock(), 'pending_cancel', { changeId: id })).toMatchObject({ ok: true });
+    expect(await call(sock(), 'pending_cancel', { changeId: id })).toMatchObject({
+      ok: false,
+      error: { code: 'not_found' },
+    });
+    const p = await call(sock(), 'pending_list', {});
+    expect(p.ok && p.data.changes).toEqual([]);
+  });
+
+  it('schedule, limit and settings operations return the right outcomes', async () => {
+    await startWithClock();
+    await call(sock(), 'block', { target: 'youtube' });
+    const schedule = {
+      timezone: 'UTC',
+      days: {
+        mon: [{ start: 540, end: 1020 }],
+        tue: [],
+        wed: [],
+        thu: [],
+        fri: [],
+        sat: [],
+        sun: [],
+      },
+    };
+    expect(await call(sock(), 'schedule_set', { target: 'youtube', schedule })).toMatchObject({
+      ok: true,
+      data: { status: 'pending', change: { kind: 'set_schedule' } },
+    });
+    expect(await call(sock(), 'schedule_clear', { target: 'youtube' })).toMatchObject({
+      ok: true,
+      data: { status: 'noop' },
+    });
+    expect(await call(sock(), 'limit_set', { target: 'youtube', minutes: 30 })).toMatchObject({
+      ok: true,
+      data: { status: 'applied' },
+    });
+    expect(await call(sock(), 'limit_set', { target: 'youtube', minutes: null })).toMatchObject({
+      ok: true,
+      data: { status: 'pending', change: { kind: 'set_limit' } },
+    });
+    expect(await call(sock(), 'settings_get', {})).toMatchObject({
+      ok: true,
+      data: { cooldownSeconds: 600, passesPerDay: 3, passMinutes: 15, timezone: 'UTC' },
+    });
+    expect(await call(sock(), 'settings_set', { key: 'cooldown', value: '20' })).toMatchObject({
+      ok: true,
+      data: { status: 'applied' },
+    });
+    expect(await call(sock(), 'settings_set', { key: 'cooldown', value: '1' })).toMatchObject({
+      ok: true,
+      data: { status: 'pending' },
+    });
+    expect(await call(sock(), 'settings_set', { key: 'cooldown', value: 'soon' })).toMatchObject({
+      ok: false,
+      error: { code: 'invalid_value' },
+    });
+    expect(await call(sock(), 'limit_set', { target: 'nosuch.example', minutes: 5 })).toMatchObject(
+      { ok: false, error: { code: 'not_found' } },
+    );
+  });
+
+  it('a pass: pending without cooldown, then the block is suspended and returns by itself', async () => {
+    await startWithClock();
+    await call(sock(), 'block', { target: 'youtube' });
+    const p = await call(sock(), 'pass_start', { target: 'youtube' });
+    const id = p.ok && p.data.status === 'pending' ? p.data.change.id : -1;
+    expect(p).toMatchObject({ ok: true, data: { change: { kind: 'start_pass', phase: 'ready' } } });
+    const c = await call(sock(), 'pending_challenge', { changeId: id });
+    if (!c.ok) throw new Error(c.error.message);
+    clock.advance(6 * SECOND);
+    expect(
+      await call(sock(), 'pending_answer', { changeId: id, response: solve(c.data.challenge) }),
+    ).toMatchObject({ ok: true, data: { result: 'applied' } });
+    expect(hosts()).toBe(HOSTS_BASE);
+    const l = await call(sock(), 'list', {});
+    expect(l.ok && l.data.rules[0]).toMatchObject({
+      blockingNow: false,
+      passEndsAt: clock.t + 15 * MINUTE - 0,
+    });
+    const s = await call(sock(), 'status', {});
+    expect(s.ok && s.data.passesUsedToday).toBe(1);
+
+    expect(await call(sock(), 'pass_end', { target: 'youtube' })).toMatchObject({
+      ok: true,
+      data: { status: 'applied' },
+    });
+    expect(hosts()).toContain('0.0.0.0 youtube.com');
+  });
+
+  it('pending changes and their state survive a daemon restart', async () => {
+    await startWithClock();
+    await call(sock(), 'block', { target: 'youtube' });
+    const u = await call(sock(), 'unblock', { target: 'youtube' });
+    const id = u.ok && u.data.status === 'pending' ? u.data.change.id : -1;
+    clock.advance(10 * MINUTE);
+    const c1 = await call(sock(), 'pending_challenge', { changeId: id });
+    await daemon?.stop();
+    daemon = undefined;
+
+    await startWithClock();
+    const p = await call(sock(), 'pending_list', {});
+    expect(p.ok && p.data.changes).toMatchObject([{ id, phase: 'ready', challengeIssued: true }]);
+    const c2 = await call(sock(), 'pending_challenge', { changeId: id });
+    expect(c1.ok && c2.ok && c2.data.challenge).toEqual(c1.ok && c1.data.challenge);
+    clock.advance(6 * SECOND);
+    expect(
+      await call(sock(), 'pending_answer', {
+        changeId: id,
+        response: solve((c2.ok ? c2.data : (undefined as never)).challenge),
+      }),
+    ).toMatchObject({ ok: true, data: { result: 'applied' } });
+    expect(hosts()).toBe(HOSTS_BASE);
+  });
+
+  it('rejects an old protocol version cleanly', async () => {
+    await start();
+    const raw = await new Promise<string>((resolve) => {
+      const s = net.connect(sock());
+      let out = '';
+      s.on('data', (d) => ((out += d), s.end()));
+      s.on('close', () => resolve(out));
+      s.on('connect', () => s.write(JSON.stringify({ v: 1, id: 'old', op: 'status' }) + '\n'));
+    });
+    expect(JSON.parse(raw)).toMatchObject({
+      id: 'old',
+      ok: false,
+      error: { code: 'unsupported_version' },
+    });
+  });
+});
 
 describe('lookupGid', () => {
   it('finds a group and ignores malformed lines', () => {

@@ -6,7 +6,7 @@ export {
   type DaemonDeps,
   type DaemonHandle,
 } from './daemon.js';
-export { Engine, type EngineDeps, type EngineResult } from './engine.js';
+export { Engine, type EngineDeps, type Failure, type Res } from './engine.js';
 export { createLogger, silentLogger, type Logger } from './log.js';
 export { createNotifier, type Notifier } from './notify.js';
 export { createPeerResolver } from './peercred.js';

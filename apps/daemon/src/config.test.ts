@@ -21,6 +21,20 @@ describe('parseConfig', () => {
       '250',
       '--peercred',
       '/tmp/p.node',
+      '--cooldown-seconds',
+      '3',
+      '--passes-per-day',
+      '2',
+      '--pass-minutes',
+      '5',
+      '--timezone',
+      'Asia/Kolkata',
+      '--challenge-kinds',
+      'typing, arithmetic',
+      '--reflection-wait-seconds',
+      '2',
+      '--min-answer-seconds',
+      '1',
     ]);
     expect(command).toBe('run');
     expect(config).toEqual({
@@ -31,7 +45,27 @@ describe('parseConfig', () => {
       stateDir: '/tmp/state',
       reconcileIntervalMs: 250,
       peercredPath: '/tmp/p.node',
+      initialSettings: {
+        cooldownSeconds: 3,
+        passesPerDay: 2,
+        passMinutes: 5,
+        timezone: 'Asia/Kolkata',
+      },
+      challengeKinds: ['typing', 'arithmetic'],
+      challengeTiming: { reflectionWaitMs: 2000, minAnswerMs: 1000 },
     });
+  });
+
+  it('defaults to the owner-approved protection settings and all challenge kinds', () => {
+    const { config } = parseConfig([]);
+    expect(config.initialSettings).toEqual({
+      cooldownSeconds: 600,
+      passesPerDay: 3,
+      passMinutes: 15,
+      timezone: null,
+    });
+    expect(config.challengeKinds).toEqual(['typing', 'arithmetic', 'reflection']);
+    expect(config.challengeTiming).toEqual({ reflectionWaitMs: 30_000, minAnswerMs: 5000 });
   });
 
   it('lets an empty --group or --peercred disable the feature', () => {
@@ -52,6 +86,13 @@ describe('parseConfig', () => {
     [['--interval-ms', '5']],
     [['--interval-ms', 'abc']],
     [['--interval-ms', '99999999']],
+    [['--cooldown-seconds', '0']],
+    [['--cooldown-seconds', 'abc']],
+    [['--passes-per-day', '25']],
+    [['--pass-minutes', '0']],
+    [['--timezone', 'Mars/Base']],
+    [['--challenge-kinds', 'typing,telepathy']],
+    [['--challenge-kinds', '']],
     [['--bogus']],
     [['positional']],
   ])('rejects %j', (argv) => {
