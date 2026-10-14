@@ -1,0 +1,14 @@
+{
+  "name": "spike-sqlite",
+  "private": true,
+  "version": "0.0.0",
+  "license": "GPL-3.0-or-later",
+  "description": "M0 spike 1: node:sqlite vs better-sqlite3, including inside a Node SEA binary. Throwaway.",
+  "dependencies": {
+    "better-sqlite3": "13.0.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "postject": "1.0.0-alpha.6"
+  }
+}

@@ -1,0 +1,73 @@
+== node v22.23.3
+== plain node: node:sqlite
+{
+ "kind": "node-sqlite",
+ "checks": {
+  "sqlite_version": "3.51.3",
+  "wal": "wal",
+  "foreign_keys": 1,
+  "strict_table": "strict enforced",
+  "user_version_migration": 3,
+  "json_functions": "youtube.com",
+  "transaction_rollback": 1,
+  "bulk_insert_10k_ms": 10,
+  "bigint_roundtrip": "FAIL: Value is too large to be represented as a JavaScript number: 9007199254740993"
+ }
+}
+(node:9) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+== plain node: better-sqlite3
+{
+ "kind": "better-sqlite3",
+ "checks": {
+  "sqlite_version": "3.53.4",
+  "wal": "wal",
+  "foreign_keys": 1,
+  "strict_table": "strict enforced",
+  "user_version_migration": 3,
+  "json_functions": "youtube.com",
+  "transaction_rollback": 1,
+  "bulk_insert_10k_ms": 13,
+  "bigint_roundtrip": "number:9007199254740992"
+ }
+}
+== SEA: node:sqlite
+Wrote single executable preparation blob to out/sea-nodesqlite.blob
+{
+ "kind": "node-sqlite",
+ "checks": {
+  "sqlite_version": "3.51.3",
+  "wal": "wal",
+  "foreign_keys": 1,
+  "strict_table": "strict enforced",
+  "user_version_migration": 3,
+  "json_functions": "youtube.com",
+  "transaction_rollback": 1,
+  "bulk_insert_10k_ms": 9,
+  "bigint_roundtrip": "FAIL: Value is too large to be represented as a JavaScript number: 9007199254740993"
+ }
+}
+(node:81) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `sea-nodesqlite --trace-warnings ...` to show where the warning was created)
+== SEA: better-sqlite3 (bundled JS, addon loaded from sidecar via nativeBinding)
+Wrote single executable preparation blob to out/sea-bsqlite.blob
+addon: node_modules/better-sqlite3/prebuilds/linux-x64.node (2.2M)
+{
+ "kind": "better-sqlite3",
+ "checks": {
+  "sqlite_version": "3.53.4",
+  "wal": "wal",
+  "foreign_keys": 1,
+  "strict_table": "strict enforced",
+  "user_version_migration": 3,
+  "json_functions": "youtube.com",
+  "transaction_rollback": 1,
+  "bulk_insert_10k_ms": 13,
+  "bigint_roundtrip": "number:9007199254740992"
+ }
+}
+== SEA: better-sqlite3 WITHOUT sidecar (expected to fail)
+Error [ERR_UNKNOWN_BUILTIN_MODULE]: No such built-in module: /spike/build/Release/better_sqlite3.node
+== sizes
+120M out/sea-bsqlite
+120M out/sea-nodesqlite
