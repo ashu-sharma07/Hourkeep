@@ -13,7 +13,7 @@ PASS: daemon sees the caller's real uid via SO_PEERCRED
 PASS: outsider is denied with a helpful message
 PASS: outsider exit code is 1
 Starting hourkeepd.service - Hourkeep focus daemon...
-INFO hourkeepd started version=0.1.0-dev socket=/run/hourkeep/hourkeep.sock dryRun=false root=/ intervalMs=5000
+INFO hourkeepd started version=0.2.0-dev socket=/run/hourkeep/hourkeep.sock dryRun=false root=/ intervalMs=5000
 Started hourkeepd.service - Hourkeep focus daemon.
 === 2. block youtube
 PASS: member: hourkeep block youtube succeeds
@@ -79,7 +79,7 @@ PASS: outside its window the block is lifted (0s)
 PASS: list says it is not blocking now
 PASS: that lifting was not counted as tampering
 PASS: widening the schedule is instant and blocks again
-PASS: when its window opens the block appears by itself (86s)
+PASS: when its window opens the block appears by itself (102s)
 PASS: ...still without any tamper event
 PASS: clearing the schedule is instant
 === 8. temporary passes and daily limits
