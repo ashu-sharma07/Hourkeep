@@ -143,3 +143,18 @@ These are the semantics M2 implements. Where the spec left room, the choice and 
 
 - Lock mode (spec section 8, optional) is left out. The pending-change machinery makes it small to add later.
 - Clock manipulation: moving the system clock forward shortens a cooldown. This needs root and is within the "determined adult with root" exclusion, but the daemon records a `clock_jump` event when wall time and monotonic time disagree by more than a minute, so it is at least visible.
+
+## 2026-10-14: M2 results and details worth remembering
+
+- **The server checks its own answers.** `createIpcServer` validates every handler result against the response schema and turns a mismatch into an `internal` error plus a local log line. This caught a real bug during M2 (the `block` reply carried extra rule fields) that otherwise showed up as a confusing "protocol mismatch" on the client.
+- **Challenge answers live in the database.** The secret part of an issued challenge is stored with the pending change so it survives a restart (same challenge, same attempts). The database is `0600` in a `0700` directory, root only, and the e2e test checks that users cannot read it. Challenges never contain the answer in what the client receives (a contract test and an e2e check both look for it).
+- **Reflection text is logged.** The text a user writes to justify a change is stored in the `change_applied` event for later analytics. It stays on the machine.
+- **Too-quick answers are not attempts.** Each challenge has a minimum answer time (5 s, 30 s for reflection). An earlier answer is rejected without using an attempt, and the CLI holds a too-quick answer and resends it.
+- **One open request per change.** Asking again for the same change returns the existing pending change instead of restarting its clock. Requests already in flight keep the cooldown they were created with, even if the setting changes.
+- **Everything stays correct if the world changes while waiting.** When a challenge is answered the change is checked again (rule still there, pass limits still allow it); if not, the request is cancelled and the user is told.
+- **Clock jumps are detected, not prevented.** The daemon compares wall-clock movement with `CLOCK_BOOTTIME` (read from `/proc/uptime`, which keeps counting through suspend) on every check, so a laptop sleeping overnight does not look like a clock change. A discrepancy over 60 s records `clock_jump`.
+- **Defaults seed once.** The `--cooldown-seconds`, `--passes-per-day`, `--pass-minutes` and `--timezone` flags only write the database the first time; afterwards the stored values win. Without this, restarting with a smaller flag would be an unannounced bypass. The Docker tests use this for a 3 second cooldown.
+- **Daily limit uses pass minutes actually used.** Ending a pass early frees the unused minutes for the limit but not the pass count. A pass is trimmed to the minutes left, and refused when under a minute is left.
+- **Dates use the stored timezone.** "Today" for pass counting is the local date in the `timezone` setting, which is itself protected (changing it is a loosening change), so moving the system timezone does not reset the count.
+- **Two new things that need a human to try.** Interactive prompts (`hourkeep confirm`, `hourkeep pass start`) are covered by scripted tests and by `--json` / `--answer` in Docker, but not by a person at a real terminal. Add them to the next manual pass.
+- **E2E now takes about five minutes** because it waits on a real two-minute schedule edge and a real one-minute pass expiry. That is the price of proving the daemon follows the real clock. The CI job stays advisory until it has run green a few times.

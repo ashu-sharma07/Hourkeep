@@ -48,6 +48,21 @@ Also check:
 - [ ] `sudo kill -9 $(pidof hourkeepd)`: systemd restarts it within about 2 seconds.
 - [ ] Reboot: the block is present before you can open a browser.
 
+## Friction checks (M2)
+
+Run these on the same VM. `e2e/run.sh` automates the logic with real systemd; this is about how it feels and what a person might try.
+
+- [ ] `hourkeep unblock youtube` does not unblock anything. YouTube still fails to load in every browser while the cooldown runs.
+- [ ] `hourkeep confirm` before the cooldown ends is refused with the time left.
+- [ ] After the cooldown, `hourkeep confirm` shows a challenge. A wrong answer changes nothing; three wrong answers give a new challenge.
+- [ ] After a correct answer YouTube loads again within a few seconds. Block it again; cancel an `unblock` with `hourkeep pending cancel <id>`; confirm nothing changed.
+- [ ] Leave a request unconfirmed for 40 minutes: it expires and YouTube stays blocked.
+- [ ] Reboot with a request pending: it is still there after the reboot, with the right time left.
+- [ ] Try the shortcuts and note what happens: edit `/etc/hosts` (reverted in 5 s), `systemctl stop hourkeepd` (block stays), `kill -9` (restarts), set the system clock forward (a `clock_jump` event is recorded; the cooldown is shortened, which is a known gap).
+- [ ] `hourkeep schedule set youtube "mon-fri 09:00-17:00"`, confirm it, then change the system timezone in your desktop settings. The schedule uses its own timezone, so nothing shifts.
+- [ ] `hourkeep pass start youtube`: challenge, then YouTube loads for the pass length and blocks again by itself. A tab left open should fail on its next request.
+- [ ] Use up the daily passes: the next one is refused with the reason.
+
 ## Cleanup
 
 - [ ] `hourkeep unblock youtube`, then confirm YouTube loads again and `/etc/hosts` has no Hourkeep lines.
