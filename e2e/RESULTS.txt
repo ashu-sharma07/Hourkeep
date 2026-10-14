@@ -1,0 +1,66 @@
+=== environment
+Ubuntu 24.04.5 LTS
+node: not installed
+104M /usr/bin/hourkeep
+104M /usr/bin/hourkeepd
+=== 1. service and access control
+PASS: hourkeepd is active (Type=notify reached READY)
+PASS: no node on PATH: binaries are self-contained
+PASS: socket is 0660 root:hourkeep
+PASS: state dir is 0700 and db is 0600
+PASS: group member can run 'hourkeep status'
+PASS: daemon sees the caller's real uid via SO_PEERCRED
+PASS: outsider is denied with a helpful message
+PASS: outsider exit code is 1
+Starting hourkeepd.service - Hourkeep focus daemon...
+INFO hourkeepd started version=0.1.0-dev socket=/run/hourkeep/hourkeep.sock dryRun=false root=/ intervalMs=5000
+Started hourkeepd.service - Hourkeep focus daemon.
+=== 2. block youtube
+PASS: member: hourkeep block youtube succeeds
+PASS: hosts file has the managed block
+PASS: name resolution (nsswitch/files) returns 0.0.0.0 for youtube.com
+PASS: ... for www.youtube.com, m.youtube.com, youtu.be, i.ytimg.com
+PASS: IPv6 sink line ':: www.youtube.com' is present
+PASS: unrelated names untouched (localhost still 127.0.0.1)
+PASS: original hosts entries preserved byte for byte
+PASS: daemon logged the write method (Docker bind mount => in-place fallback)
+PASS: list shows the rule
+PASS: status counts 1 rule and 0 tamper events
+=== 3. tamper is reverted within the reconcile interval (5s)
+PASS: whole block deleted: restored in 3s (limit 7s)
+PASS: getent resolves to 0.0.0.0 again
+PASS: one youtube.com line deleted: restored in 5s (limit 7s)
+PASS: address rewritten to 1.2.3.4: restored in 5s (limit 7s)
+PASS: end marker removed (half-deleted block): restored in 5s (limit 7s)
+PASS: block commented out: restored in 5s (limit 7s)
+PASS: whole file overwritten: block comes back in 5s
+PASS: block re-added next to the restored original lines (5s)
+PASS: edits outside the block are left alone
+PASS: tamper events were recorded (>= 6)
+PASS: journal says tamper detected
+=== 4. restart, crash and persistence
+PASS: rules survive 'systemctl restart'
+PASS: block still in place after restart
+PASS: daemon restarted after SIGKILL (new pid)
+PASS: rules survive a crash
+PASS: stopping the daemon leaves the block in place
+PASS: on start the daemon re-applies stored rules immediately
+PASS: ...and does not count that as tampering
+=== 5. unblock and uninstall cleanup
+PASS: unblock is instant
+PASS: hosts file back to the original
+PASS: no leftover temp files in /etc
+PASS: plain domain blocks example.com and www.example.com
+PASS: wildcard is refused with a clear error
+PASS: unknown group is refused and lists known groups
+PASS: 'hourkeepd --teardown' removes the block
+=== 6. hardening
+  CapabilityBoundingSet=cap_chown cap_dac_override cap_fowner
+  PrivateTmp=yes
+  ProtectHome=yes
+  ProtectSystem=strict
+  NoNewPrivileges=yes
+  → Overall exposure level for hourkeepd.service: 3.9 OK :-)
+PASS: still works under the hardened unit
+
+RESULT: 44 passed, 0 failed

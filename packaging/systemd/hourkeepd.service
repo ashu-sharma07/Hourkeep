@@ -1,0 +1,45 @@
+# Draft unit for hourkeepd. Packaging (M5) installs it as /usr/lib/systemd/system/hourkeepd.service.
+[Unit]
+Description=Hourkeep focus daemon
+Documentation=https://hourkeep.dev
+After=local-fs.target
+
+[Service]
+Type=notify
+# Node cannot send datagrams to NOTIFY_SOCKET itself; a systemd-notify child does.
+NotifyAccess=all
+ExecStart=/usr/bin/hourkeepd
+Restart=always
+RestartSec=1
+# The daemon only pings while its reconcile loop is running, so a wedged daemon is restarted.
+WatchdogSec=30
+
+RuntimeDirectory=hourkeep
+RuntimeDirectoryMode=0755
+StateDirectory=hourkeep
+StateDirectoryMode=0700
+
+# Hardening. /etc must stay writable for /etc/hosts (and its temp file for atomic replace).
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/etc
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# V8 needs writable+executable memory for its JIT, so MemoryDenyWriteExecute must stay off.
+MemoryDenyWriteExecute=no
+SystemCallArchitectures=native
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER
+
+[Install]
+WantedBy=multi-user.target

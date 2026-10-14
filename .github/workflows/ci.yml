@@ -17,12 +17,20 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      e2e: ${{ steps.filter.outputs.e2e }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
         id: filter
         with:
           filters: |
+            e2e:
+              - 'packages/**'
+              - 'apps/**'
+              - 'e2e/**'
+              - 'packaging/**'
+              - 'pnpm-lock.yaml'
+              - '.github/workflows/ci.yml'
             code:
               - 'packages/**'
               - 'apps/**'
@@ -64,3 +72,14 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec prettier --check .
+
+  e2e:
+    # Real systemd and a real hosts file inside Docker. Advisory until it has proven stable on
+    # GitHub-hosted runners (it needs cgroup v2 and SYS_ADMIN in the container).
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: e2e/run.sh

@@ -1,0 +1,7 @@
+.git
+**/node_modules
+**/dist
+.turbo
+spikes
+coverage
+Hourkeep Agent Kickoff Pack.md

@@ -1,0 +1,11 @@
+{
+  "name": "hourkeep-e2e-tooling",
+  "private": true,
+  "version": "0.0.0",
+  "license": "GPL-3.0-or-later",
+  "description": "Build tooling for the Docker end-to-end test. Not part of the pnpm workspace.",
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "postject": "1.0.0-alpha.6"
+  }
+}
