@@ -1,0 +1,114 @@
+# Browser bypass check, 2026-10-14. Debian 12 container, Playwright 1.64.0 bundled browsers:
+#   chromium-1248
+#   firefox-1555
+building images (first run downloads browsers, a few minutes)...
+Debian GNU/Linux 12 (bookworm)
+
+=== baseline: nothing blocked, browsers must reach YouTube
+PASS  chromium / normal window  (control reachable)
+        REACHED   https://www.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://m.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://music.youtube.com/  HTTP 200 "Your browser is deprecated, please upgra"
+        REACHED   https://youtu.be/dQw4w9WgXcQ  HTTP 200 "Rick Astley - Never Gonna Give You Up (O"
+PASS  chromium / incognito window  (control reachable)
+        REACHED   https://www.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://m.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://music.youtube.com/  HTTP 200 "Your browser is deprecated, please upgra"
+        REACHED   https://youtu.be/dQw4w9WgXcQ  HTTP 200 "Rick Astley - Never Gonna Give You Up (O"
+PASS  chromium / guest window  (control reachable)
+        REACHED   https://www.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://m.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://music.youtube.com/  HTTP 200 "Your browser is deprecated, please upgra"
+        REACHED   https://youtu.be/dQw4w9WgXcQ  HTTP 200 "Rick Astley - Never Gonna Give You Up (O"
+PASS  firefox / normal window  (control reachable)
+        REACHED   https://www.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://m.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://music.youtube.com/  HTTP 200 "YouTube Music"
+        REACHED   https://youtu.be/dQw4w9WgXcQ  HTTP 200 "Rick Astley - Never Gonna Give You Up (O"
+PASS  firefox / private window  (control reachable)
+        REACHED   https://www.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://m.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://music.youtube.com/  HTTP 200 "YouTube Music"
+        REACHED   https://youtu.be/dQw4w9WgXcQ  HTTP 200 "Rick Astley - Never Gonna Give You Up (O"
+
+ALL OK (baseline)
+
+=== hourkeep block youtube
+Blocked youtube (group). 25 domains are now blocked.
+
+=== blocked: YouTube must be unreachable in every window; control site still reachable
+PASS  chromium / normal window  (control reachable)
+        blocked   https://www.youtube.com/  net::ERR_CONNECTION_REFUSED
+        blocked   https://m.youtube.com/  net::ERR_CONNECTION_REFUSED
+        blocked   https://music.youtube.com/  net::ERR_CONNECTION_REFUSED
+        blocked   https://youtu.be/dQw4w9WgXcQ  net::ERR_CONNECTION_REFUSED
+PASS  chromium / incognito window  (control reachable)
+        blocked   https://www.youtube.com/  net::ERR_CONNECTION_REFUSED
+        blocked   https://m.youtube.com/  net::ERR_CONNECTION_REFUSED
+        blocked   https://music.youtube.com/  net::ERR_CONNECTION_REFUSED
+        blocked   https://youtu.be/dQw4w9WgXcQ  net::ERR_CONNECTION_REFUSED
+PASS  chromium / guest window  (control reachable)
+        blocked   https://www.youtube.com/  net::ERR_CONNECTION_REFUSED
+        blocked   https://m.youtube.com/  net::ERR_CONNECTION_REFUSED
+        blocked   https://music.youtube.com/  net::ERR_CONNECTION_REFUSED
+        blocked   https://youtu.be/dQw4w9WgXcQ  net::ERR_CONNECTION_REFUSED
+PASS  firefox / normal window  (control reachable)
+        blocked   https://www.youtube.com/  NS_ERROR_CONNECTION_REFUSED
+        blocked   https://m.youtube.com/  NS_ERROR_CONNECTION_REFUSED
+        blocked   https://music.youtube.com/  NS_ERROR_CONNECTION_REFUSED
+        blocked   https://youtu.be/dQw4w9WgXcQ  NS_ERROR_CONNECTION_REFUSED
+PASS  firefox / private window  (control reachable)
+        blocked   https://www.youtube.com/  NS_ERROR_CONNECTION_REFUSED
+        blocked   https://m.youtube.com/  NS_ERROR_CONNECTION_REFUSED
+        blocked   https://music.youtube.com/  NS_ERROR_CONNECTION_REFUSED
+        blocked   https://youtu.be/dQw4w9WgXcQ  NS_ERROR_CONNECTION_REFUSED
+
+ALL OK (blocked)
+
+=== known limitation probe: Firefox with DNS-over-HTTPS forced (informational, not asserted)
+PASS  firefox / DoH forced, default prefs  (control reachable)
+        blocked   https://www.youtube.com/  NS_ERROR_CONNECTION_REFUSED
+        blocked   https://m.youtube.com/  NS_ERROR_CONNECTION_REFUSED
+        blocked   https://music.youtube.com/  NS_ERROR_CONNECTION_REFUSED
+        blocked   https://youtu.be/dQw4w9WgXcQ  NS_ERROR_CONNECTION_REFUSED
+        self-check: Using DNS over HTTPS (DoH) Yes
+PASS  firefox / DoH forced + network.trr.exclude-etc-hosts=false  (control reachable)
+        blocked   https://www.youtube.com/  NS_ERROR_CONNECTION_REFUSED
+        blocked   https://m.youtube.com/  NS_ERROR_CONNECTION_REFUSED
+        blocked   https://music.youtube.com/  NS_ERROR_CONNECTION_REFUSED
+        blocked   https://youtu.be/dQw4w9WgXcQ  NS_ERROR_CONNECTION_REFUSED
+        self-check: Using DNS over HTTPS (DoH) Yes
+INFO  DoH forced, default prefs: 0/4 YouTube URLs reachable (Using DNS over HTTPS (DoH) Yes)
+INFO  DoH forced + network.trr.exclude-etc-hosts=false: 0/4 YouTube URLs reachable (Using DNS over HTTPS (DoH) Yes)
+
+=== after unblock: browsers must reach YouTube again
+Unblocked youtube (group). 0 domains are still blocked.
+PASS  chromium / normal window  (control reachable)
+        REACHED   https://www.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://m.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://music.youtube.com/  HTTP 200 "Your browser is deprecated, please upgra"
+        REACHED   https://youtu.be/dQw4w9WgXcQ  HTTP 200 "Rick Astley - Never Gonna Give You Up (O"
+PASS  chromium / incognito window  (control reachable)
+        REACHED   https://www.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://m.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://music.youtube.com/  HTTP 200 "Your browser is deprecated, please upgra"
+        REACHED   https://youtu.be/dQw4w9WgXcQ  HTTP 200 "Rick Astley - Never Gonna Give You Up (O"
+PASS  chromium / guest window  (control reachable)
+        REACHED   https://www.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://m.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://music.youtube.com/  HTTP 200 "Your browser is deprecated, please upgra"
+        REACHED   https://youtu.be/dQw4w9WgXcQ  HTTP 200 "Rick Astley - Never Gonna Give You Up (O"
+PASS  firefox / normal window  (control reachable)
+        REACHED   https://www.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://m.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://music.youtube.com/  HTTP 200 "YouTube Music"
+        REACHED   https://youtu.be/dQw4w9WgXcQ  HTTP 200 "Rick Astley - Never Gonna Give You Up (O"
+PASS  firefox / private window  (control reachable)
+        REACHED   https://www.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://m.youtube.com/  HTTP 200 "YouTube"
+        REACHED   https://music.youtube.com/  HTTP 200 "YouTube Music"
+        REACHED   https://youtu.be/dQw4w9WgXcQ  HTTP 200 "Rick Astley - Never Gonna Give You Up (O"
+
+ALL OK (baseline)
+
+BROWSER CHECK: OK

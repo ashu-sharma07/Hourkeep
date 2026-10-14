@@ -1,0 +1,11 @@
+{
+  "name": "hourkeep-e2e-browsers",
+  "private": true,
+  "version": "0.0.0",
+  "license": "GPL-3.0-or-later",
+  "description": "Browser bypass check. Not part of the pnpm workspace.",
+  "type": "module",
+  "dependencies": {
+    "playwright": "1.64.0"
+  }
+}
