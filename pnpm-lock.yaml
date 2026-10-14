@@ -196,6 +196,9 @@ importers:
 
   apps/cli:
     dependencies:
+      '@hourkeep/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@hourkeep/ipc':
         specifier: workspace:*
         version: link:../../packages/ipc

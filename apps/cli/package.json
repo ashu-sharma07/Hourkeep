@@ -19,6 +19,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@hourkeep/core": "workspace:*",
     "@hourkeep/ipc": "workspace:*",
     "commander": "15.0.0"
   },
