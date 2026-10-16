@@ -1,6 +1,14 @@
 export { normalizeDomain } from './domain.js';
 export { BUILTIN_GROUPS, parseGroupData, type Group, type GroupData } from './groups.js';
-export { parseTarget, resolveRules, ruleKey, type Rule } from './rules.js';
+export {
+  parseTarget,
+  resolveRules,
+  resolveSuffixes,
+  ruleKey,
+  type Rule,
+  type SuffixEntry,
+  type SuffixSpec,
+} from './rules.js';
 export { err, ok, type Result } from './result.js';
 export {
   DAYS,
@@ -65,3 +73,21 @@ export {
   type SettingKey,
   type Settings,
 } from './friction.js';
+export {
+  SLOT_MS,
+  STATS_RANGES,
+  addDays,
+  computeStreak,
+  creditedMs,
+  dailyTotals,
+  daysBetween,
+  hourOfDay,
+  isCleanDay,
+  localHour,
+  rangeStart,
+  slotStart,
+  solveRate,
+  type DayFacts,
+  type StatsRange,
+  type Streak,
+} from './analytics.js';

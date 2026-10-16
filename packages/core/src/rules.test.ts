@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_GROUPS } from './groups.js';
-import { parseTarget, resolveRules, ruleKey } from './rules.js';
+import { parseTarget, resolveRules, resolveSuffixes, ruleKey } from './rules.js';
 
 const groups = BUILTIN_GROUPS.groups;
 
@@ -74,5 +74,64 @@ describe('ruleKey', () => {
     expect(ruleKey({ kind: 'group', target: 'a' })).not.toBe(
       ruleKey({ kind: 'domain', target: 'a' }),
     );
+  });
+});
+
+describe('resolveSuffixes', () => {
+  const yt = { kind: 'group', target: 'youtube' } as const;
+
+  it('uses group domains as whole-domain suffixes and drops names a shorter suffix already covers', () => {
+    const spec = resolveSuffixes([yt], groups);
+    const suffixes = spec.block.map((e) => e.suffix);
+    expect(suffixes).toContain('googlevideo.com');
+    expect(suffixes).toContain('youtube.com');
+    expect(suffixes).not.toContain('www.youtube.com'); // covered by youtube.com
+    expect(suffixes).not.toContain('redirector.googlevideo.com');
+    expect(suffixes).toContain('youtubei.googleapis.com'); // never the whole of googleapis.com
+    expect(suffixes).not.toContain('googleapis.com');
+    expect(spec.block.every((e) => e.owner.target === 'youtube')).toBe(true);
+  });
+
+  it('carries the group exceptions only while the group is a rule', () => {
+    expect(resolveSuffixes([yt], groups).allow).toEqual([
+      'accounts.youtube.com',
+      'consent.youtube.com',
+    ]);
+    expect(resolveSuffixes([{ kind: 'domain', target: 'youtube.com' }], groups).allow).toEqual([]);
+  });
+
+  it('does not add www. for a plain domain: the suffix already covers it', () => {
+    expect(resolveSuffixes([{ kind: 'domain', target: 'reddit.com' }], groups).block).toEqual([
+      { suffix: 'reddit.com', owner: { kind: 'domain', target: 'reddit.com' } },
+    ]);
+  });
+
+  it('the first rule to ask for a suffix owns it', () => {
+    const spec = resolveSuffixes([{ kind: 'domain', target: 'youtube.com' }, yt], groups);
+    expect(spec.block.find((e) => e.suffix === 'youtube.com')?.owner).toEqual({
+      kind: 'domain',
+      target: 'youtube.com',
+    });
+  });
+
+  it('a domain rule under a blocked suffix is redundant and dropped', () => {
+    const spec = resolveSuffixes(
+      [
+        { kind: 'domain', target: 'reddit.com' },
+        { kind: 'domain', target: 'old.reddit.com' },
+      ],
+      groups,
+    );
+    expect(spec.block.map((e) => e.suffix)).toEqual(['reddit.com']);
+  });
+
+  it('is sorted and empty for no rules or unknown groups', () => {
+    expect(resolveSuffixes([], groups)).toEqual({ block: [], allow: [] });
+    expect(resolveSuffixes([{ kind: 'group', target: 'gone' }], groups)).toEqual({
+      block: [],
+      allow: [],
+    });
+    const names = resolveSuffixes([yt], groups).block.map((e) => e.suffix);
+    expect([...names].sort((a, b) => a.localeCompare(b))).toEqual(names);
   });
 });

@@ -7,6 +7,11 @@ export interface Group {
   readonly name: string;
   readonly description: string;
   readonly domains: readonly string[];
+  /**
+   * Names that must stay reachable even though they sit under a blocked domain. Only the DNS
+   * layer (which blocks whole domains) uses this; the hosts layer lists exact names.
+   */
+  readonly allow: readonly string[];
   readonly notes: readonly string[];
 }
 
@@ -52,11 +57,28 @@ export function parseGroupData(raw: unknown): GroupData {
       if (unique.has(d)) throw new Error(`group "${id}": duplicate domain "${d}"`);
       unique.add(d);
     }
+    const allow: string[] = [];
+    const allowRaw = o['allow'];
+    if (allowRaw !== undefined) {
+      if (!Array.isArray(allowRaw)) throw new Error(`group "${id}": allow must be a list`);
+      for (const a of allowRaw as unknown[]) {
+        if (typeof a !== 'string') throw new Error(`group "${id}": allow entry is not a string`);
+        const n = normalizeDomain(a);
+        if (!n.ok) throw new Error(`group "${id}": allow: ${n.error}`);
+        if (n.value !== a) throw new Error(`group "${id}": allow "${a}" is not normalised`);
+        const covered = (domains as string[]).some((d) => a === d || a.endsWith(`.${d}`));
+        if (!covered)
+          throw new Error(`group "${id}": allow "${a}" is not under any blocked domain`);
+        if (allow.includes(a)) throw new Error(`group "${id}": duplicate allow "${a}"`);
+        allow.push(a);
+      }
+    }
     return {
       id,
       name,
       description: typeof o['description'] === 'string' ? o['description'] : '',
       domains: domains as string[],
+      allow,
       notes: Array.isArray(o['notes']) ? (o['notes'] as string[]) : [],
     };
   });

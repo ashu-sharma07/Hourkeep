@@ -25,10 +25,17 @@ describe('built-in group data', () => {
     }
   });
 
-  it('does not list shared sign-in endpoints', () => {
+  it('does not list shared sign-in endpoints, and allows them past the DNS layer', () => {
     const yt = BUILTIN_GROUPS.groups.find((g) => g.id === 'youtube');
     expect(yt?.domains).not.toContain('accounts.youtube.com');
     expect(yt?.domains).not.toContain('consent.youtube.com');
+    expect(yt?.allow).toEqual(['accounts.youtube.com', 'consent.youtube.com']);
+  });
+
+  it('covers every googlevideo subdomain through one suffix', () => {
+    const yt = BUILTIN_GROUPS.groups.find((g) => g.id === 'youtube');
+    expect(yt?.domains).toContain('googlevideo.com');
+    expect(yt?.domains).toContain('ytimg.com');
   });
 });
 
@@ -39,8 +46,17 @@ describe('parseGroupData', () => {
     groups: [{ id: 'x', name: 'X', domains: ['x.example'] }],
   };
 
-  it('accepts minimal valid data', () => {
+  it('accepts minimal valid data; allow defaults to empty', () => {
     expect(parseGroupData(good).groups[0]?.domains).toEqual(['x.example']);
+    expect(parseGroupData(good).groups[0]?.allow).toEqual([]);
+  });
+
+  it('accepts an allow entry under a blocked domain', () => {
+    const g = parseGroupData({
+      ...good,
+      groups: [{ ...good.groups[0], allow: ['login.x.example'] }],
+    });
+    expect(g.groups[0]?.allow).toEqual(['login.x.example']);
   });
 
   it.each([
