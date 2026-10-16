@@ -158,3 +158,38 @@ These are the semantics M2 implements. Where the spec left room, the choice and 
 - **Dates use the stored timezone.** "Today" for pass counting is the local date in the `timezone` setting, which is itself protected (changing it is a loosening change), so moving the system timezone does not reset the count.
 - **Two new things that need a human to try.** Interactive prompts (`hourkeep confirm`, `hourkeep pass start`) are covered by scripted tests and by `--json` / `--answer` in Docker, but not by a person at a real terminal. Add them to the next manual pass.
 - **E2E now takes about five minutes** because it waits on a real two-minute schedule edge and a real one-minute pass expiry. That is the price of proving the daemon follows the real clock. The CI job stays advisory until it has run green a few times.
+
+## 2026-10-16: M3 design (DNS layer and analytics)
+
+**Scope.** Layer 2 of the blocking strategy: a local DNS resolver the daemon runs, blocking by domain suffix (so wildcards work), counting blocked lookups, and a configurator that points the system at it and puts everything back on uninstall. Analytics are aggregated in the daemon and read through one IPC operation; clients never see the database.
+
+**The DNS layer is opt-in (`hourkeepd --dns`).** The spec says the daemon makes no network calls unless explicitly enabled. Forwarding allowed lookups to your real DNS servers is network access, and taking over the system resolver is a system change, so it needs the flag. The hosts layer stays on regardless. `hourkeepd --teardown` reverts both layers.
+
+**Blocking semantics.**
+
+- A rule blocks its domain and every subdomain: `block reddit.com` blocks `old.reddit.com`; the YouTube group lists `googlevideo.com`, which is how `*.googlevideo.com` is covered. This is why the hosts layer's biggest gap closes here.
+- A group can list `allow` exceptions that are never blocked even under a blocked suffix. The YouTube group allows `accounts.youtube.com` and `consent.youtube.com` (shared Google sign-in and consent endpoints; the M1 decision to leave them out of the hosts list still holds). Matching uses the longest suffix, so the most specific rule wins.
+- Blocked names get `NXDOMAIN` for every query type (A, AAAA, HTTPS and the rest), with a short SOA so resolvers do not cache the refusal for long. Browsers fail immediately instead of waiting for a connection to a dead address. The hosts layer keeps its `0.0.0.0` sink.
+- The set blocked at any moment is the same one the hosts layer uses: schedules and passes apply to both layers, and a pass or schedule edge takes effect on the next lookup.
+
+**What is counted, and what is not (privacy).** Only blocked lookups are recorded, as hourly counts per rule and per matching suffix (a flood of random `rN---sn-xxxx.googlevideo.com` names counts under `googlevideo.com`, not as thousands of rows). For everything else the daemon keeps one number per hour: how many lookups it forwarded. It never stores which names you looked up, who asked, or any answer. A "blocked attempt" is a blocked _lookup_: one page load makes several (A, AAAA, HTTPS), so counts are lookups and the CLI says so. Counts are exact for the traffic the resolver receives: tests send a known number of queries and expect exactly that number.
+
+**Fail-safe by design.** Losing DNS is worse than losing a block, so:
+
+- The daemon refuses to take over the system resolver unless it found at least one usable upstream server that is not itself. If the listener cannot bind, nothing is changed.
+- With systemd-resolved the drop-in sets `DNS=127.0.0.1` and `Domains=~.`; resolved falls back to its other servers when ours does not answer. With plain `/etc/resolv.conf` our line goes first and the original servers stay as fallbacks.
+- Every change is backed up first (to `<state-dir>/dns-backup.json`, file contents and modes), and restoring does not need the database or a running daemon: `hourkeepd --teardown` is enough.
+- After configuring, the daemon resolves a private canary name through the normal system path. If the answer did not come from our resolver (for example NetworkManager gave a link its own DNS servers that take priority), `status` says the DNS layer is configured but **not in effect** instead of claiming protection it does not have.
+- Stopping the daemon leaves the configuration in place, like the hosts block. The resolver config tolerates a missing server for the reasons above, and `Restart=always` brings it back in a second.
+
+**Upstream.** Taken from `<state>/dns-backup` of the original configuration: for resolved, `/run/systemd/resolve/resolv.conf`; for resolv.conf, its `nameserver` lines. Loopback addresses are dropped (they could be us). Explicit `--upstream` addresses override. UDP and TCP are both served and forwarded, so truncated answers and large responses work.
+
+**Analytics definitions** (computed from the event log and a few counter tables, all in the timezone setting):
+
+- _Blocked lookups_: per rule, per matching suffix, per hour; hour-of-day histogram and daily totals.
+- _Time in each state_: seconds per rule in `blocking`, `pass` and `scheduled off`, plus time with a change in its `cooldown`, counted only while the daemon runs (a gap longer than twice the check interval is not credited).
+- _Friction_: requests, applied, cancelled, expired; per challenge type, how many were issued, solved and answered wrong, with the solve rate. Cancel counts are the "I changed my mind" signal.
+- _Streak_: consecutive "clean days": days the daemon ran with at least one rule, with no tamper event, no clock jump and no protection-loosening change applied. Passes do not break a streak, they are the allowed path. The streak is the number of clean days up to and including today.
+- _Tamper events_: count and per-day counts.
+
+**Protocol v3.** The `status` reply grows DNS fields and a new `stats` operation returns the aggregate for a range (`today`, `week`, `month`, `all`). Version bumped because the strict `status` shape changed.
