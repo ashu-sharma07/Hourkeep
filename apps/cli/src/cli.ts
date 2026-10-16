@@ -1,5 +1,5 @@
 import * as readline from 'node:readline';
-import { Command, CommanderError } from 'commander';
+import { Command, CommanderError, Option } from 'commander';
 import { parseScheduleSpec } from '@hourkeep/core';
 import {
   IpcClientError,
@@ -19,12 +19,13 @@ import {
   formatOutcome,
   formatPendingList,
   formatSettings,
+  formatStats,
   formatStatus,
   span,
 } from './format.js';
 
 export const DEFAULT_SOCKET = '/run/hourkeep/hourkeep.sock';
-export const CLI_VERSION = '0.2.0-dev';
+export const CLI_VERSION = '0.3.0-dev';
 
 /** Everything the CLI needs from the outside world, injectable for tests. */
 export interface CliIo {
@@ -259,6 +260,18 @@ export async function runCli(argv: readonly string[], io: CliIo = realIo): Promi
     .command('status')
     .description('show daemon state')
     .action(() => simple('status', {}, (d) => formatStatus(d, io.now())));
+
+  program
+    .command('stats')
+    .description('analytics: blocked lookups, time under each rule, friction, streak, tamper')
+    .addOption(
+      new Option('--range <range>', 'period to cover')
+        .choices(['today', 'week', 'month', 'all'])
+        .default('week'),
+    )
+    .action((o: { range: 'today' | 'week' | 'month' | 'all' }) =>
+      simple('stats', { range: o.range }, formatStats),
+    );
 
   program
     .command('list')

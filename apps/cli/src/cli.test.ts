@@ -58,7 +58,7 @@ function harness(reply: (op: Op, params: unknown, n: number) => unknown, o: Opts
   return h;
 }
 
-const ok = <T>(data: T) => ({ v: 2, id: 'x', ok: true, data });
+const ok = <T>(data: T) => ({ v: 3, id: 'x', ok: true, data });
 const fail = (code: string, message: string) => ({
   v: 2,
   id: 'x',
@@ -69,7 +69,7 @@ const text = (a: string[]) => a.join('');
 
 const statusData: DataOf<'status'> = {
   daemonVersion: '0.1.0-dev',
-  protocol: 2,
+  protocol: 3,
   dryRun: false,
   ruleCount: 1,
   blockedDomainCount: 25,
@@ -79,6 +79,15 @@ const statusData: DataOf<'status'> = {
   pendingCount: 1,
   passesUsedToday: 1,
   passesPerDay: 3,
+  dns: {
+    enabled: true,
+    listening: '127.0.0.1:53',
+    strategy: 'systemd-resolved',
+    inEffect: true,
+    upstreamCount: 2,
+    problem: null,
+    blockedToday: 1234,
+  },
   callerUid: 1000,
 };
 
@@ -108,9 +117,13 @@ describe('read-only commands', () => {
     const h = harness(() => ok(statusData));
     expect(await runCli(['status'], h.io)).toBe(0);
     const t = text(h.out);
-    expect(t).toContain('hourkeepd 0.1.0-dev (protocol 2)');
+    expect(t).toContain('hourkeepd 0.1.0-dev (protocol 3)');
     expect(t).toContain('Pending changes:   1  (see: hourkeep pending)');
     expect(t).toContain('Passes today:      1 of 3 used');
+    expect(t).toContain(
+      'DNS layer:         on (127.0.0.1:53, systemd-resolved, 2 upstreams), in effect',
+    );
+    expect(t).toContain('Blocked today:     1,234 lookups');
     expect(t).toContain('Last check:        2026-10-14T10:00:07.000Z (3s ago)');
     expect(t).toContain('Tamper events:     2, last 2026-10-14T09:00:10.000Z (1h ago)');
     expect(h.calls).toEqual([{ socket: DEFAULT_SOCKET, op: 'status', params: {} }]);
@@ -199,6 +212,50 @@ describe('read-only commands', () => {
     const none = harness(() => ok({ changes: [] }));
     await runCli(['pending', 'list'], none.io);
     expect(text(none.out)).toBe('No pending changes.\n');
+  });
+});
+
+describe('status shows the DNS layer honestly', () => {
+  const dnsOf = (dns: Partial<DataOf<'status'>['dns']>) =>
+    harness(() => ok({ ...statusData, dns: { ...statusData.dns, ...dns } }));
+  const line = async (dns: Partial<DataOf<'status'>['dns']>) => {
+    const h = dnsOf(dns);
+    await runCli(['status'], h.io);
+    return text(h.out);
+  };
+
+  it('says it is off, and how to turn it on', async () => {
+    const t = await line({
+      enabled: false,
+      listening: null,
+      strategy: null,
+      inEffect: null,
+      upstreamCount: 0,
+      blockedToday: 0,
+    });
+    expect(t).toContain('DNS layer:         off (start hourkeepd with --dns');
+    expect(t).not.toContain('Blocked today');
+  });
+
+  it('says when it is on but not running, with the reason', async () => {
+    const t = await line({
+      listening: null,
+      inEffect: null,
+      problem: 'no usable upstream DNS server found, so the system resolver was left alone',
+    });
+    expect(t).toContain('on, but NOT running: no usable upstream DNS server found');
+  });
+
+  it('says when it is configured but programs do not reach it', async () => {
+    const t = await line({ inEffect: false, problem: 'something else has priority' });
+    expect(t).toContain(
+      'configured (127.0.0.1:53, systemd-resolved, 2 upstreams) but NOT in effect',
+    );
+    expect(t).toContain('something else has priority');
+  });
+
+  it('uses the singular for one upstream', async () => {
+    expect(await line({ upstreamCount: 1 })).toContain('1 upstream)');
   });
 });
 
@@ -704,6 +761,6 @@ describe('global options and errors', () => {
     );
     const v = harness(() => ok(statusData));
     expect(await runCli(['--version'], v.io)).toBe(0);
-    expect(text(v.out)).toContain('0.2.0-dev');
+    expect(text(v.out)).toContain('0.3.0-dev');
   });
 });

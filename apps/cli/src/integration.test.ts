@@ -111,6 +111,22 @@ describe('hourkeep CLI against hourkeepd', () => {
     });
   });
 
+  it('status says the DNS layer is off, and stats reads the same daemon', async () => {
+    await run(['block', 'youtube']);
+    expect((await run(['status'])).out).toContain('DNS layer:         off');
+    const r = await run(['stats', '--range', 'today']);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('Hourkeep stats: today (2026-10-14), times in UTC');
+    expect(r.out).toContain('The DNS layer is off');
+    const j = json(await run(['--json', 'stats', '--range', 'all']));
+    expect(j.ok).toBe(true);
+    expect(j.data).toMatchObject({
+      range: 'all',
+      dns: { enabled: false, blocked: 0 },
+      streak: { current: 0 },
+    });
+  });
+
   it('unblock needs the cooldown and the challenge; nothing is unblocked before then', async () => {
     await run(['block', 'youtube']);
     const u = await run(['unblock', 'youtube']);
