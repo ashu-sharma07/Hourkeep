@@ -9,9 +9,12 @@ import {
   makeSchedule,
   parseSetting,
   parseTarget,
+  creditedMs,
   resolveRules,
+  resolveSuffixes,
   scheduleEquals,
   secureRng,
+  slotStart,
   type ChallengeKindId,
   type GroupData,
   type PublicChallenge,
@@ -19,11 +22,21 @@ import {
   type Rng,
   type Rule,
   type Settings,
+  type StatsRange,
+  type SuffixSpec,
   type Timing,
   type WeeklySchedule,
 } from '@hourkeep/core';
-import type { ChangeOutcome, PendingView, RuleDetail, ScheduleWire } from '@hourkeep/ipc';
+import type {
+  ChangeOutcome,
+  DnsStatus,
+  PendingView,
+  RuleDetail,
+  ScheduleWire,
+  StatsData,
+} from '@hourkeep/ipc';
 import type { PlatformEnforcer, ReconcileResult } from '@hourkeep/platform';
+import { blockedToday, computeStats } from './analytics.js';
 import { bootClockMs } from './clock.js';
 import { formatDuration, summarize, type Change } from './changes.js';
 import type { Logger } from './log.js';
@@ -34,6 +47,25 @@ export type { Failure, Res } from './pending.js';
 
 const fail = (code: Failure['code'], message: string): Failure => ({ ok: false, code, message });
 const ruleKey = (r: Rule): string => `${r.kind}:${r.target}`;
+
+/** What the engine needs from the DNS layer; the daemon supplies the real one. */
+export interface DnsPort {
+  /** What to block now. Called whenever the blocked set changes. */
+  setSpec(spec: SuffixSpec): void;
+  /** Write buffered counters to the database. */
+  flush(): void;
+  status(): Omit<DnsStatus, 'blockedToday'>;
+}
+
+export const DNS_OFF: DnsStatus = {
+  enabled: false,
+  listening: null,
+  strategy: null,
+  inEffect: null,
+  upstreamCount: 0,
+  problem: null,
+  blockedToday: 0,
+};
 
 export interface EngineDeps {
   readonly store: Store;
@@ -49,6 +81,9 @@ export interface EngineDeps {
   /** Monotonic clock that includes suspend; used to notice the wall clock being set. */
   readonly bootClock?: () => number;
   readonly rng?: Rng;
+  /** Check interval, used to decide how much time a sample may be credited with. */
+  readonly intervalMs?: number;
+  readonly dns?: DnsPort;
 }
 
 export interface EngineStatus {
@@ -60,6 +95,7 @@ export interface EngineStatus {
   pendingCount: number;
   passesUsedToday: number;
   passesPerDay: number;
+  dns: DnsStatus;
   dryRun: boolean;
 }
 
@@ -78,6 +114,8 @@ export class Engine {
   private lastAppliedKey: string | null = null;
   private lastWall: number | null = null;
   private lastBoot = 0;
+  private lastSampleAt: number | null = null;
+  private lastSpecKey: string | null = null;
   private readonly now: () => number;
   private readonly boot: () => number;
   private readonly pending: PendingChanges;
@@ -198,8 +236,10 @@ export class Engine {
       st.seedSetting('timezone', d.timezone);
       this.lastWall = this.now();
       this.lastBoot = this.boot();
+      this.lastSampleAt = this.lastWall;
       st.recordEvent('daemon_start', this.lastWall, null, { rules: st.listRules().length });
       this.pending.expireDue();
+      this.pruneHistory();
       await this.apply(true);
     });
   }
@@ -213,12 +253,48 @@ export class Engine {
       this.checkClock();
       this.endLapsedPasses();
       this.pending.expireDue();
+      this.sampleStates();
       try {
         await this.apply(false);
       } catch (e) {
         this.reportApplyError(e);
       }
     });
+  }
+
+  /**
+   * Credit the time since the last check to each rule's current state, and to the daemon's
+   * own "protecting" and "waiting out a cooldown" clocks. A gap longer than two intervals
+   * (daemon stopped, machine asleep) is not credited: only time we actually watched counts.
+   */
+  private sampleStates(): void {
+    const now = this.now();
+    const last = this.lastSampleAt;
+    this.lastSampleAt = now;
+    if (last === null) return;
+    const ms = creditedMs(now - last, this.deps.intervalMs ?? 5000);
+    if (ms === 0) return;
+    const st = this.deps.store;
+    const day = this.dayKey(now);
+    const rules = st.listRules();
+    const passes = st.activePasses(now);
+    for (const r of rules) {
+      const onPass = passes.some((p) => p.kind === r.kind && p.target === r.target);
+      st.addStateTime(
+        day,
+        r,
+        onPass ? 'pass' : isActive(r.schedule, now) ? 'blocking' : 'scheduled_off',
+        ms,
+      );
+    }
+    if (rules.length > 0) st.addActivity(day, 'protected', ms);
+    if (st.openPending().some((p) => p.cooldownEndsAt > now)) st.addActivity(day, 'cooldown', ms);
+  }
+
+  /** Forget counters older than about 13 months so the database does not grow forever. */
+  private pruneHistory(): void {
+    const cutoff = this.lastWall === null ? this.now() : this.lastWall - 400 * 86_400_000;
+    this.deps.store.prune(slotStart(cutoff), this.dayKey(cutoff));
   }
 
   private checkClock(): void {
@@ -264,8 +340,10 @@ export class Engine {
    * `verify`, where any difference is tampering.
    */
   private async apply(forceUpdate: boolean): Promise<ReconcileResult> {
-    const desired = this.desiredDomains();
+    const now = this.now();
+    const desired = this.desiredDomains(now);
     const key = desired.join('\n');
+    this.updateDns(now);
     const intent = forceUpdate || key !== this.lastAppliedKey ? 'update' : 'verify';
     const result = await this.deps.enforcer.reconcile(desired, intent);
     this.lastAppliedKey = key;
@@ -287,6 +365,20 @@ export class Engine {
       });
     }
     return result;
+  }
+
+  /** Hand the DNS layer the whole-domain version of what is blocking now, when it changed. */
+  private updateDns(now: number): void {
+    const dns = this.deps.dns;
+    if (!dns) return;
+    const spec = resolveSuffixes(this.blockingRules(now), this.deps.groups.groups);
+    const key = JSON.stringify([
+      spec.block.map((e) => [e.suffix, e.owner.kind, e.owner.target]),
+      spec.allow,
+    ]);
+    if (key === this.lastSpecKey) return;
+    this.lastSpecKey = key;
+    dns.setSpec(spec);
   }
 
   /** Log and record a failure once per distinct message, not every interval. */
@@ -607,6 +699,8 @@ export class Engine {
           kind: row.kind,
           summary: row.summary,
           requestedBy: row.requestedByUid,
+          challenge: row.challenge?.public.id ?? null,
+          challengeKind: row.challenge?.public.data.kind ?? null,
           reflection,
         });
         if (!done.ok) return done;
@@ -620,6 +714,13 @@ export class Engine {
   status(): EngineStatus {
     const { store, dryRun } = this.deps;
     const now = this.now();
+    this.deps.dns?.flush();
+    const dns: DnsStatus = this.deps.dns
+      ? {
+          ...this.deps.dns.status(),
+          blockedToday: blockedToday(store, now, this.settings().timezone),
+        }
+      : DNS_OFF;
     return {
       ruleCount: store.listRules().length,
       blockedDomainCount: this.desiredDomains(now).length,
@@ -629,8 +730,21 @@ export class Engine {
       pendingCount: this.pending.list().length,
       passesUsedToday: store.passesOnDay(this.dayKey(now)).length,
       passesPerDay: this.settings().passesPerDay,
+      dns,
       dryRun,
     };
+  }
+
+  /** Analytics for a range, aggregated from counters and the event log. */
+  stats(range: StatsRange): StatsData {
+    this.deps.dns?.flush();
+    return computeStats(
+      this.deps.store,
+      range,
+      this.now(),
+      this.settings().timezone,
+      this.deps.dns !== undefined,
+    );
   }
 
   list(): { rules: RuleDetail[]; blockedDomains: string[] } {

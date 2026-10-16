@@ -199,6 +199,7 @@ export class PendingChanges {
     this.d.store.recordEvent('challenge_failed', now, null, {
       id,
       challenge: row.challenge.public.id,
+      kind: row.challenge.public.data.kind,
     });
     if (left > 0) {
       this.d.store.setAttempts(id, left);

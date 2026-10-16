@@ -44,6 +44,11 @@ export interface ResolverOptions {
   readonly runner?: CommandRunner;
   /** `auto` (default) picks systemd-resolved when it is running, else resolv.conf. */
   readonly strategy?: 'auto' | ResolverStrategy;
+  /**
+   * Upstreams the caller will forward to (for example from `--upstream`). They satisfy the
+   * "there is somewhere to forward to" safety check even if the system's own list is empty.
+   */
+  readonly knownUpstreams?: readonly string[];
 }
 
 type Saved =
@@ -150,7 +155,7 @@ export class ResolverConfigurator {
    */
   async configure(): Promise<{ strategy: ResolverStrategy; changed: boolean }> {
     const strategy = await this.detect();
-    const upstreams = await this.upstreams();
+    const upstreams = [...(this.o.knownUpstreams ?? []), ...(await this.upstreams())];
     if (upstreams.length === 0) {
       throw new Error('no usable upstream DNS server found (not taking over the system resolver)');
     }

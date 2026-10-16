@@ -53,6 +53,7 @@ describe('parseConfig', () => {
       },
       challengeKinds: ['typing', 'arithmetic'],
       challengeTiming: { reflectionWaitMs: 2000, minAnswerMs: 1000 },
+      dns: { enabled: false, address: '127.0.0.1', port: 53, upstreams: [] },
     });
   });
 
@@ -66,6 +67,31 @@ describe('parseConfig', () => {
     });
     expect(config.challengeKinds).toEqual(['typing', 'arithmetic', 'reflection']);
     expect(config.challengeTiming).toEqual({ reflectionWaitMs: 30_000, minAnswerMs: 5000 });
+  });
+
+  it('the DNS layer is off by default and configured by flags', () => {
+    expect(parseConfig([]).config.dns).toEqual({
+      enabled: false,
+      address: '127.0.0.1',
+      port: 53,
+      upstreams: [],
+    });
+    expect(
+      parseConfig([
+        '--dns',
+        '--dns-listen',
+        '127.0.0.1:5353',
+        '--upstream',
+        '1.1.1.1',
+        '--upstream',
+        '2606:4700::1111',
+      ]).config.dns,
+    ).toEqual({
+      enabled: true,
+      address: '127.0.0.1',
+      port: 5353,
+      upstreams: ['1.1.1.1', '2606:4700::1111'],
+    });
   });
 
   it('lets an empty --group or --peercred disable the feature', () => {
@@ -93,6 +119,13 @@ describe('parseConfig', () => {
     [['--timezone', 'Mars/Base']],
     [['--challenge-kinds', 'typing,telepathy']],
     [['--challenge-kinds', '']],
+    [['--dns-listen', 'localhost:53']],
+    [['--dns-listen', '127.0.0.1']],
+    [['--dns-listen', '127.0.0.1:0']],
+    [['--dns-listen', '127.0.0.1:70000']],
+    [['--upstream', 'dns.example']],
+    [['--upstream', '127.0.0.53']],
+    [['--upstream', '::1']],
     [['--bogus']],
     [['positional']],
   ])('rejects %j', (argv) => {

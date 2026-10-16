@@ -87,6 +87,44 @@ export const MIGRATIONS: readonly Migration[] = [
       ALTER TABLE rules DROP COLUMN schedule;
     `,
   },
+  {
+    version: 3,
+    up: `
+      CREATE TABLE dns_blocked (
+        slot        INTEGER NOT NULL,
+        suffix      TEXT NOT NULL,
+        rule_kind   TEXT NOT NULL,
+        rule_target TEXT NOT NULL,
+        count       INTEGER NOT NULL,
+        PRIMARY KEY (slot, suffix, rule_kind, rule_target)
+      ) STRICT;
+      CREATE TABLE dns_totals (
+        slot      INTEGER PRIMARY KEY,
+        forwarded INTEGER NOT NULL,
+        failed    INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE state_time (
+        day         TEXT NOT NULL,
+        rule_kind   TEXT NOT NULL,
+        rule_target TEXT NOT NULL,
+        state       TEXT NOT NULL CHECK (state IN ('blocking', 'pass', 'scheduled_off')),
+        ms          INTEGER NOT NULL,
+        PRIMARY KEY (day, rule_kind, rule_target, state)
+      ) STRICT;
+      CREATE TABLE activity (
+        day TEXT NOT NULL,
+        key TEXT NOT NULL,
+        ms  INTEGER NOT NULL,
+        PRIMARY KEY (day, key)
+      ) STRICT;
+    `,
+    down: `
+      DROP TABLE activity;
+      DROP TABLE state_time;
+      DROP TABLE dns_totals;
+      DROP TABLE dns_blocked;
+    `,
+  },
 ];
 
 export class SchemaTooNewError extends Error {}
@@ -156,6 +194,23 @@ export type EventType =
   | 'clock_jump'
   | 'tamper'
   | 'reconcile_error';
+
+export type RuleState = 'blocking' | 'pass' | 'scheduled_off';
+
+export interface DnsBlockedRow {
+  readonly slot: number;
+  readonly suffix: string;
+  readonly kind: 'domain' | 'group';
+  readonly target: string;
+  readonly count: number;
+}
+
+export interface EventRow {
+  readonly ts: number;
+  readonly type: string;
+  readonly uid: number | null;
+  readonly payload: Record<string, unknown>;
+}
 
 export type PendingStatus = 'pending' | 'applied' | 'cancelled' | 'expired';
 
@@ -468,7 +523,141 @@ export class Store {
       .run(now, id);
   }
 
+  // ---- DNS counters (blocked lookups per 15 minute slot, forwarded totals) ----
+
+  addDnsBlocked(slot: number, suffix: string, rule: Rule, n: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO dns_blocked (slot, suffix, rule_kind, rule_target, count) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (slot, suffix, rule_kind, rule_target) DO UPDATE SET count = count + excluded.count`,
+      )
+      .run(slot, suffix, rule.kind, rule.target, n);
+  }
+
+  addDnsTotals(slot: number, forwarded: number, failed: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO dns_totals (slot, forwarded, failed) VALUES (?, ?, ?)
+         ON CONFLICT (slot) DO UPDATE SET forwarded = forwarded + excluded.forwarded, failed = failed + excluded.failed`,
+      )
+      .run(slot, forwarded, failed);
+  }
+
+  /** Blocked-lookup rows in slots at or after `sinceSlot`. */
+  dnsBlockedSince(sinceSlot: number): DnsBlockedRow[] {
+    const rows = this.db
+      .prepare(
+        'SELECT slot, suffix, rule_kind, rule_target, count FROM dns_blocked WHERE slot >= ? ORDER BY slot',
+      )
+      .all(sinceSlot) as unknown as {
+      slot: number;
+      suffix: string;
+      rule_kind: 'domain' | 'group';
+      rule_target: string;
+      count: number;
+    }[];
+    return rows.map((r) => ({
+      slot: Number(r.slot),
+      suffix: r.suffix,
+      kind: r.rule_kind,
+      target: r.rule_target,
+      count: Number(r.count),
+    }));
+  }
+
+  dnsTotalsSince(sinceSlot: number): { slot: number; forwarded: number; failed: number }[] {
+    const rows = this.db
+      .prepare('SELECT slot, forwarded, failed FROM dns_totals WHERE slot >= ? ORDER BY slot')
+      .all(sinceSlot) as unknown as { slot: number; forwarded: number; failed: number }[];
+    return rows.map((r) => ({
+      slot: Number(r.slot),
+      forwarded: Number(r.forwarded),
+      failed: Number(r.failed),
+    }));
+  }
+
+  // ---- dwell time ----
+
+  addStateTime(day: string, rule: Rule, state: RuleState, ms: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO state_time (day, rule_kind, rule_target, state, ms) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (day, rule_kind, rule_target, state) DO UPDATE SET ms = ms + excluded.ms`,
+      )
+      .run(day, rule.kind, rule.target, state, ms);
+  }
+
+  stateTimeSince(
+    fromDay: string | null,
+  ): { day: string; kind: 'domain' | 'group'; target: string; state: RuleState; ms: number }[] {
+    const rows = this.db
+      .prepare(
+        'SELECT day, rule_kind, rule_target, state, ms FROM state_time WHERE day >= ? ORDER BY day',
+      )
+      .all(fromDay ?? '0000-00-00') as unknown as {
+      day: string;
+      rule_kind: 'domain' | 'group';
+      rule_target: string;
+      state: RuleState;
+      ms: number;
+    }[];
+    return rows.map((r) => ({
+      day: r.day,
+      kind: r.rule_kind,
+      target: r.rule_target,
+      state: r.state,
+      ms: Number(r.ms),
+    }));
+  }
+
+  /** Daemon-level dwell time: `protected` (running with at least one rule) and `cooldown`. */
+  addActivity(day: string, key: 'protected' | 'cooldown', ms: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO activity (day, key, ms) VALUES (?, ?, ?)
+         ON CONFLICT (day, key) DO UPDATE SET ms = ms + excluded.ms`,
+      )
+      .run(day, key, ms);
+  }
+
+  activitySince(fromDay: string | null): { day: string; key: string; ms: number }[] {
+    const rows = this.db
+      .prepare('SELECT day, key, ms FROM activity WHERE day >= ? ORDER BY day')
+      .all(fromDay ?? '0000-00-00') as unknown as { day: string; key: string; ms: number }[];
+    return rows.map((r) => ({ day: r.day, key: r.key, ms: Number(r.ms) }));
+  }
+
+  /** Forget counters older than the given slot and day (history older than about 13 months). */
+  prune(beforeSlot: number, beforeDay: string): void {
+    this.db.prepare('DELETE FROM dns_blocked WHERE slot < ?').run(beforeSlot);
+    this.db.prepare('DELETE FROM dns_totals WHERE slot < ?').run(beforeSlot);
+    this.db.prepare('DELETE FROM state_time WHERE day < ?').run(beforeDay);
+    this.db.prepare('DELETE FROM activity WHERE day < ?').run(beforeDay);
+  }
+
   // ---- events ----
+
+  /** Events of the given types at or after `sinceTs`, oldest first. */
+  eventRows(types: readonly EventType[], sinceTs: number): EventRow[] {
+    if (types.length === 0) return [];
+    const marks = types.map(() => '?').join(', ');
+    const rows = this.db
+      .prepare(
+        `SELECT ts, type, uid, payload FROM events WHERE type IN (${marks}) AND ts >= ? ORDER BY id`,
+      )
+      .all(...types, sinceTs) as unknown as {
+      ts: number;
+      type: string;
+      uid: number | null;
+      payload: string;
+    }[];
+    return rows.map((r) => ({
+      ts: Number(r.ts),
+      type: r.type,
+      uid: r.uid,
+      payload: JSON.parse(r.payload) as Record<string, unknown>,
+    }));
+  }
 
   recordEvent(type: EventType, ts: number, uid: number | null, payload: object = {}): void {
     this.db

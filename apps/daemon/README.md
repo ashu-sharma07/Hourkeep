@@ -10,6 +10,8 @@ The product. A root service that owns the rules, keeps the hosts file in line wi
 - **Schedules** decide when a rule is blocking (weekly windows in an IANA timezone, DST-safe). **Passes** suspend one rule for a while (default 3 per day, 15 minutes), need a challenge but no cooldown, and respect a per-rule daily limit in pass minutes.
 - Every `--interval-ms` (default 5 s) it expires stale requests, follows schedule and pass transitions, and re-checks the hosts file. Any unexpected difference in the managed block is reverted and a `tamper` event is stored. A change of the desired set (schedule edge, pass start or end) is never reported as tampering.
 - Records the caller's UID (via the SO_PEERCRED addon) with each change, and a `clock_jump` event if the wall clock moves without the boot clock.
+- **DNS layer (opt-in, `--dns`).** Runs a local resolver (UDP and TCP, default `127.0.0.1:53`) that blocks whole domains, so `*.googlevideo.com` and every other subdomain of a blocked rule is covered. Blocked names get `NXDOMAIN`; everything else is forwarded untouched to your real resolvers. It points the system at itself (a `systemd-resolved` drop-in, or `/etc/resolv.conf` with the original servers kept as fallbacks), saves the original settings first, and `hourkeepd --teardown` puts them back. It refuses to take over unless it could bind its port and found a real upstream, puts its settings back if something rewrites them (recorded as tamper), and runs a self-test so `hourkeep status` says plainly when the system does not actually use it.
+- **Analytics.** Counts blocked lookups per rule, matching suffix and 15 minute slot (never the exact name, and for allowed lookups only a total), the seconds each rule spends blocking, on a pass or outside its schedule, and reads friction and tamper numbers from the event log. The `stats` operation aggregates them for today, the week, the month or everything; the database is never exposed.
 - Talks to systemd: `READY=1`, `STOPPING=1`, and watchdog pings that stop if the check loop stops.
 - Stopping the daemon leaves the hosts block in place. Removing it is a deliberate act: `hourkeepd --teardown`.
 
@@ -21,6 +23,7 @@ hourkeepd [--root DIR] [--dry-run] [--socket PATH] [--group NAME] [--state-dir D
           [--cooldown-seconds N] [--passes-per-day N] [--pass-minutes N] [--timezone ZONE]
           [--challenge-kinds typing,arithmetic,reflection]
           [--reflection-wait-seconds N] [--min-answer-seconds N]
+          [--dns] [--dns-listen ADDR:PORT] [--upstream ADDRESS]...
 hourkeepd --teardown | --version | --help
 ```
 
@@ -39,4 +42,4 @@ Node has no `SO_PEERCRED` API, so a 16 KB C addon provides it (`native/peercred.
 
 ## Layout
 
-`config.ts` flags, `store.ts` SQLite and migrations, `engine.ts` state, classification and reconcile logic, `pending.ts` the cooldown and challenge state machine, `changes.ts` change types and summaries, `daemon.ts` wiring and request handler, `clock.ts` boot clock, `notify.ts` systemd, `peercred.ts` caller identity, `main.ts` entry point.
+`config.ts` flags, `dns-layer.ts` the resolver, system settings, counters and self-test, `analytics.ts` the numbers behind `stats`, `store.ts` SQLite and migrations, `engine.ts` state, classification and reconcile logic, `pending.ts` the cooldown and challenge state machine, `changes.ts` change types and summaries, `daemon.ts` wiring and request handler, `clock.ts` boot clock, `notify.ts` systemd, `peercred.ts` caller identity, `main.ts` entry point.

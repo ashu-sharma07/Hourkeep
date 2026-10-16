@@ -8,7 +8,18 @@ import { MIGRATIONS, SchemaTooNewError, Store, migrate } from './store.js';
 
 const version = (db: DatabaseSync): number =>
   (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
-const TABLES = ['events', 'meta', 'passes', 'pending_changes', 'rules', 'settings'];
+const TABLES = [
+  'activity',
+  'dns_blocked',
+  'dns_totals',
+  'events',
+  'meta',
+  'passes',
+  'pending_changes',
+  'rules',
+  'settings',
+  'state_time',
+];
 const tables = (db: DatabaseSync): string[] =>
   (
     db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as {
@@ -156,6 +167,129 @@ describe('Store: schedules, limits, settings', () => {
     expect(s.settings()).toEqual({ cooldown_seconds: '600' });
     s.setSetting('cooldown_seconds', '1200');
     expect(s.settings()).toEqual({ cooldown_seconds: '1200' });
+  });
+});
+
+describe('migration v2 to v3', () => {
+  it('adds the counter tables and keeps everything else', () => {
+    const db = new DatabaseSync(':memory:');
+    migrate(db, MIGRATIONS, 2);
+    db.exec(
+      "INSERT INTO rules (kind, target, created_at, updated_at) VALUES ('group', 'youtube', 1, 1)",
+    );
+    db.exec("INSERT INTO events (ts, type, uid, payload) VALUES (1, 'tamper', NULL, '{}')");
+    migrate(db);
+    expect(version(db)).toBe(MIGRATIONS.length);
+    expect(tables(db)).toEqual(TABLES);
+    expect((db.prepare('SELECT count(*) AS c FROM rules').get() as { c: number }).c).toBe(1);
+    expect((db.prepare('SELECT count(*) AS c FROM events').get() as { c: number }).c).toBe(1);
+  });
+
+  it('rolls back to v2 without touching rules or events', () => {
+    const db = new DatabaseSync(':memory:');
+    migrate(db);
+    db.exec(
+      "INSERT INTO rules (kind, target, created_at, updated_at) VALUES ('group', 'youtube', 1, 1)",
+    );
+    migrate(db, MIGRATIONS, 2);
+    expect(version(db)).toBe(2);
+    expect(tables(db)).not.toContain('dns_blocked');
+    expect((db.prepare('SELECT count(*) AS c FROM rules').get() as { c: number }).c).toBe(1);
+  });
+
+  it('has no column that could hold a name someone looked up', () => {
+    const db = new DatabaseSync(':memory:');
+    migrate(db);
+    const cols = (t: string) =>
+      (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map((c) => c.name);
+    expect(cols('dns_blocked')).toEqual(['slot', 'suffix', 'rule_kind', 'rule_target', 'count']);
+    expect(cols('dns_totals')).toEqual(['slot', 'forwarded', 'failed']);
+  });
+});
+
+describe('Store: DNS counters, dwell time, events', () => {
+  const yt = { kind: 'group', target: 'youtube' } as const;
+  const rd = { kind: 'domain', target: 'reddit.com' } as const;
+
+  it('adds blocked counts into the same slot, suffix and rule', () => {
+    const s = Store.open(':memory:');
+    s.addDnsBlocked(900_000, 'googlevideo.com', yt, 3);
+    s.addDnsBlocked(900_000, 'googlevideo.com', yt, 4);
+    s.addDnsBlocked(900_000, 'youtube.com', yt, 1);
+    s.addDnsBlocked(1_800_000, 'reddit.com', rd, 2);
+    expect(s.dnsBlockedSince(0)).toEqual([
+      { slot: 900_000, suffix: 'googlevideo.com', kind: 'group', target: 'youtube', count: 7 },
+      { slot: 900_000, suffix: 'youtube.com', kind: 'group', target: 'youtube', count: 1 },
+      { slot: 1_800_000, suffix: 'reddit.com', kind: 'domain', target: 'reddit.com', count: 2 },
+    ]);
+    expect(s.dnsBlockedSince(1_800_000)).toHaveLength(1);
+  });
+
+  it('adds forwarded and failed totals per slot', () => {
+    const s = Store.open(':memory:');
+    s.addDnsTotals(900_000, 10, 1);
+    s.addDnsTotals(900_000, 5, 0);
+    s.addDnsTotals(1_800_000, 1, 0);
+    expect(s.dnsTotalsSince(0)).toEqual([
+      { slot: 900_000, forwarded: 15, failed: 1 },
+      { slot: 1_800_000, forwarded: 1, failed: 0 },
+    ]);
+  });
+
+  it('adds dwell time per day, rule and state, and daemon activity per day', () => {
+    const s = Store.open(':memory:');
+    s.addStateTime('2026-10-14', yt, 'blocking', 5000);
+    s.addStateTime('2026-10-14', yt, 'blocking', 5000);
+    s.addStateTime('2026-10-14', yt, 'pass', 1000);
+    s.addStateTime('2026-10-15', yt, 'scheduled_off', 2000);
+    expect(s.stateTimeSince(null).map((r) => [r.day, r.state, r.ms])).toEqual([
+      ['2026-10-14', 'blocking', 10_000],
+      ['2026-10-14', 'pass', 1000],
+      ['2026-10-15', 'scheduled_off', 2000],
+    ]);
+    expect(s.stateTimeSince('2026-10-15')).toHaveLength(1);
+    s.addActivity('2026-10-14', 'protected', 3000);
+    s.addActivity('2026-10-14', 'protected', 3000);
+    s.addActivity('2026-10-14', 'cooldown', 500);
+    expect(s.activitySince(null)).toEqual([
+      { day: '2026-10-14', key: 'cooldown', ms: 500 },
+      { day: '2026-10-14', key: 'protected', ms: 6000 },
+    ]);
+  });
+
+  it('rejects an unknown rule state', () => {
+    const s = Store.open(':memory:');
+    expect(() => s.addStateTime('2026-10-14', yt, 'weird' as 'pass', 1)).toThrow();
+  });
+
+  it('forgets old counters but keeps recent ones', () => {
+    const s = Store.open(':memory:');
+    s.addDnsBlocked(100, 'a.example', rd, 1);
+    s.addDnsBlocked(900_000_000, 'b.example', rd, 1);
+    s.addDnsTotals(100, 1, 0);
+    s.addStateTime('2025-01-01', rd, 'blocking', 1);
+    s.addStateTime('2026-10-14', rd, 'blocking', 1);
+    s.addActivity('2025-01-01', 'protected', 1);
+    s.prune(1_000_000, '2026-01-01');
+    expect(s.dnsBlockedSince(0).map((r) => r.suffix)).toEqual(['b.example']);
+    expect(s.dnsTotalsSince(0)).toEqual([]);
+    expect(s.stateTimeSince(null).map((r) => r.day)).toEqual(['2026-10-14']);
+    expect(s.activitySince(null)).toEqual([]);
+  });
+
+  it('reads back events of chosen types after a time, with their payloads', () => {
+    const s = Store.open(':memory:');
+    s.recordEvent('tamper', 100, null, { kind: 'removed' });
+    s.recordEvent('rule_added', 150, 1000);
+    s.recordEvent('tamper', 200, null, { kind: 'modified' });
+    s.recordEvent('clock_jump', 300, null);
+    expect(
+      s.eventRows(['tamper', 'clock_jump'], 150).map((e) => [e.ts, e.type, e.payload]),
+    ).toEqual([
+      [200, 'tamper', { kind: 'modified' }],
+      [300, 'clock_jump', {}],
+    ]);
+    expect(s.eventRows([], 0)).toEqual([]);
   });
 });
 

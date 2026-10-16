@@ -1,8 +1,11 @@
+import * as dgram from 'node:dgram';
 import * as fs from 'node:fs';
+import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { PublicChallenge } from '@hourkeep/core';
 import type { PublicChallengeWire } from '@hourkeep/ipc';
+import { RCODE, buildQuery, rcodeOf } from '@hourkeep/platform';
 import { DEFAULT_CONFIG, type DaemonConfig } from './config.js';
 import { silentLogger } from './log.js';
 import type { Notifier } from './notify.js';
@@ -99,4 +102,55 @@ export function solve(c: PublicChallenge | PublicChallengeWire): string {
     case 'reflection':
       return 'I have a deadline tomorrow and need this one site for the lecture video';
   }
+}
+
+/** Send one DNS query over UDP to 127.0.0.1:port; resolves with the response (null on timeout). */
+export function dnsAsk(
+  port: number,
+  name: string,
+  type = 1,
+  timeoutMs = 2000,
+): Promise<Buffer | null> {
+  return new Promise((resolve) => {
+    const s = dgram.createSocket('udp4');
+    let done = false;
+    const finish = (r: Buffer | null): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      s.close();
+      resolve(r);
+    };
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    s.on('error', () => finish(null));
+    s.on('message', (m) => finish(m));
+    s.send(buildQuery(name, type, Math.floor(Math.random() * 65535)), port, '127.0.0.1');
+  });
+}
+
+/** The response code for a lookup, or -1 when nothing answered. */
+export async function dnsRcode(port: number, name: string, type = 1): Promise<number> {
+  const r = await dnsAsk(port, name, type);
+  return r ? (rcodeOf(r) ?? -1) : -1;
+}
+
+export { RCODE };
+
+/** A port that was free a moment ago for both UDP and TCP (the DNS server needs both). */
+export async function freePort(): Promise<number> {
+  for (let i = 0; i < 20; i++) {
+    const tcp = net.createServer();
+    const port = await new Promise<number>((resolve) =>
+      tcp.listen(0, '127.0.0.1', () => resolve((tcp.address() as net.AddressInfo).port)),
+    );
+    await new Promise((r) => tcp.close(r));
+    const udp = dgram.createSocket('udp4');
+    const ok = await new Promise<boolean>((resolve) => {
+      udp.once('error', () => resolve(false));
+      udp.bind(port, '127.0.0.1', () => resolve(true));
+    });
+    await new Promise<void>((r) => (ok ? udp.close(() => r()) : r()));
+    if (ok) return port;
+  }
+  throw new Error('no free port');
 }

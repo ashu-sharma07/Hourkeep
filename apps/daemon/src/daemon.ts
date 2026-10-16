@@ -20,8 +20,9 @@ import {
   type PublicChallengeWire,
   type RequestHandler,
 } from '@hourkeep/ipc';
-import { HostsFileEnforcer } from '@hourkeep/platform';
+import { HostsFileEnforcer, type CommandRunner, type ResolverStrategy } from '@hourkeep/platform';
 import type { DaemonConfig } from './config.js';
+import { DnsLayer } from './dns-layer.js';
 import { Engine } from './engine.js';
 import type { Logger } from './log.js';
 import type { Notifier } from './notify.js';
@@ -39,6 +40,13 @@ export interface DaemonDeps {
   readonly rng?: Rng;
   /** For tests: override the group database used to resolve `socketGroup`. */
   readonly groupFile?: string;
+  /** For tests: run system commands (systemctl) through this instead of the real thing. */
+  readonly runner?: CommandRunner;
+  readonly dnsStrategy?: 'auto' | ResolverStrategy;
+  /** For tests: how the self-test resolves a name "through the system". */
+  readonly dnsLookup?: (name: string) => Promise<string[]>;
+  readonly dnsSelfTestEveryMs?: number;
+  readonly dnsUpstreamTimeoutMs?: number;
 }
 
 export interface DaemonHandle {
@@ -158,6 +166,8 @@ export function createHandler(engine: Engine, groups: GroupData): RequestHandler
         return outcome(await engine.requestPass(req.target, uid));
       case 'pass_end':
         return outcome(await engine.endPass(req.target, uid));
+      case 'stats':
+        return { ok: true, data: engine.stats(req.range) };
     }
   };
 }
@@ -177,6 +187,27 @@ export async function startDaemon(config: DaemonConfig, deps: DaemonDeps): Promi
   fs.chmodSync(dbFile, 0o600);
 
   const enforcer = new HostsFileEnforcer({ root: config.root, dryRun: config.dryRun });
+  const clock = deps.clock ?? Date.now;
+  const dnsLayer = config.dns.enabled
+    ? new DnsLayer({
+        root: config.root,
+        dryRun: config.dryRun,
+        backupPath: path.join(config.stateDir, 'dns-backup.json'),
+        address: config.dns.address,
+        port: config.dns.port,
+        upstreams: config.dns.upstreams,
+        store,
+        logger,
+        clock,
+        onTamper: (problem) =>
+          store.recordEvent('tamper', clock(), null, { kind: 'dns-config', problem }),
+        ...(deps.runner ? { runner: deps.runner } : {}),
+        ...(deps.dnsStrategy ? { strategy: deps.dnsStrategy } : {}),
+        ...(deps.dnsLookup ? { lookup: deps.dnsLookup } : {}),
+        ...(deps.dnsSelfTestEveryMs ? { selfTestEveryMs: deps.dnsSelfTestEveryMs } : {}),
+        ...(deps.dnsUpstreamTimeoutMs ? { upstreamTimeoutMs: deps.dnsUpstreamTimeoutMs } : {}),
+      })
+    : undefined;
   const engine = new Engine({
     store,
     enforcer,
@@ -189,11 +220,14 @@ export async function startDaemon(config: DaemonConfig, deps: DaemonDeps): Promi
     },
     challengeKinds: config.challengeKinds,
     timing: config.challengeTiming,
+    intervalMs: config.reconcileIntervalMs,
+    ...(dnsLayer ? { dns: dnsLayer } : {}),
     ...(deps.clock ? { clock: deps.clock } : {}),
     ...(deps.bootClock ? { bootClock: deps.bootClock } : {}),
     ...(deps.rng ? { rng: deps.rng } : {}),
   });
   await engine.start();
+  if (dnsLayer) await dnsLayer.start();
 
   fs.mkdirSync(path.dirname(config.socketPath), { recursive: true, mode: 0o755 });
   let server: IpcServer;
@@ -226,9 +260,12 @@ export async function startDaemon(config: DaemonConfig, deps: DaemonDeps): Promi
   let lastTick = Date.now();
   let stopped = false;
   const tick = setInterval(() => {
-    void engine.verify().then(() => {
-      lastTick = Date.now();
-    });
+    void engine
+      .verify()
+      .then(() => dnsLayer?.tick())
+      .then(() => {
+        lastTick = Date.now();
+      });
   }, config.reconcileIntervalMs);
 
   // Only tell systemd we are alive while the check loop is actually running, so a wedged
@@ -264,6 +301,7 @@ export async function startDaemon(config: DaemonConfig, deps: DaemonDeps): Promi
       notifier.stopping();
       await server.close();
       await engine.drain();
+      await dnsLayer?.stop();
       store.close();
       logger.log('info', 'hourkeepd stopped');
     },

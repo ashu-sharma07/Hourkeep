@@ -4,13 +4,18 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { call } from '@hourkeep/ipc';
 import { BUILTIN_GROUPS, seededRng } from '@hourkeep/core';
+import { ResolverConfigurator } from '@hourkeep/platform';
 import { startDaemon, lookupGid, type DaemonHandle } from './daemon.js';
 import type { Notifier } from './notify.js';
 import {
   FakeClock,
   HOSTS_BASE,
   MINUTE,
+  RCODE,
   SECOND,
+  dnsAsk,
+  dnsRcode,
+  freePort,
   makeSandbox,
   noopNotifier,
   silent,
@@ -45,7 +50,7 @@ describe('hourkeepd over its socket', () => {
     expect(r).toMatchObject({
       ok: true,
       data: {
-        protocol: 2,
+        protocol: 3,
         dryRun: false,
         ruleCount: 0,
         blockedDomainCount: 0,
@@ -53,6 +58,15 @@ describe('hourkeepd over its socket', () => {
         pendingCount: 0,
         passesUsedToday: 0,
         passesPerDay: 3,
+        dns: {
+          enabled: false,
+          listening: null,
+          strategy: null,
+          inEffect: null,
+          upstreamCount: 0,
+          problem: null,
+          blockedToday: 0,
+        },
         callerUid: 1234,
       },
     });
@@ -411,13 +425,178 @@ describe('the friction flow over the socket', () => {
       let out = '';
       s.on('data', (d) => ((out += d), s.end()));
       s.on('close', () => resolve(out));
-      s.on('connect', () => s.write(JSON.stringify({ v: 1, id: 'old', op: 'status' }) + '\n'));
+      s.on('connect', () => s.write(JSON.stringify({ v: 2, id: 'old', op: 'status' }) + '\n'));
     });
     expect(JSON.parse(raw)).toMatchObject({
       id: 'old',
       ok: false,
       error: { code: 'unsupported_version' },
     });
+  });
+});
+
+describe('the DNS layer inside the daemon', () => {
+  const commands: string[] = [];
+  const dropIn = () => path.join(sb.root, 'etc/systemd/resolved.conf.d/hourkeep.conf');
+  let port = 0;
+
+  const startDns = async (extra: Partial<Parameters<typeof startDaemon>[1]> = {}) => {
+    fs.mkdirSync(path.join(sb.root, 'run/systemd/resolve'), { recursive: true });
+    fs.writeFileSync(
+      path.join(sb.root, 'run/systemd/resolve/resolv.conf'),
+      'nameserver 192.0.2.1\nnameserver 127.0.0.53\n',
+    );
+    const cfg = {
+      ...sb.config,
+      dns: {
+        enabled: true,
+        address: '127.0.0.1',
+        port: (port = await freePort()),
+        upstreams: [] as string[],
+      },
+    };
+    await start(
+      {
+        runner: {
+          run: async (c, a) => {
+            commands.push(`${c} ${a.join(' ')}`);
+            return { code: 0, stdout: '', stderr: '' };
+          },
+        },
+        dnsStrategy: 'systemd-resolved',
+        dnsUpstreamTimeoutMs: 150,
+        dnsLookup: async (name) => {
+          const r = await dnsAsk(port, name);
+          return r && r.readUInt16BE(6) > 0 ? [[...r.subarray(r.length - 4)].join('.')] : [];
+        },
+        ...extra,
+      },
+      cfg,
+    );
+    const st = await call(sock(), 'status', {});
+    if (!st.ok || !st.data.dns.listening) throw new Error('dns did not start');
+    expect(st.data.dns.listening).toBe(`127.0.0.1:${port}`);
+    return st.data.dns;
+  };
+
+  beforeEach(() => {
+    commands.length = 0;
+  });
+
+  it('starts the resolver, configures the system, and reports it in status', async () => {
+    const dns = await startDns();
+    expect(dns).toMatchObject({
+      enabled: true,
+      strategy: 'systemd-resolved',
+      inEffect: true,
+      upstreamCount: 1,
+      problem: null,
+      blockedToday: 0,
+    });
+    expect(fs.readFileSync(dropIn(), 'utf8')).toContain(`DNS=127.0.0.1:${port}`);
+    expect(commands).toContain('systemctl restart systemd-resolved');
+  });
+
+  it('blocks a rule and every subdomain, lets the exceptions through, and ignores other names', async () => {
+    await startDns();
+    await call(sock(), 'block', { target: 'youtube' });
+    for (const n of [
+      'googlevideo.com',
+      'rr1---sn-ab5l6n7y.googlevideo.com',
+      'a.b.c.googlevideo.com',
+      'www.youtube.com',
+      'img.ytimg.com',
+      'i.ytimg.com',
+    ]) {
+      expect(await dnsRcode(port, n), n).toBe(RCODE.NXDOMAIN);
+    }
+    // sign-in and consent stay reachable (they are forwarded; the test upstream does not answer)
+    expect(await dnsRcode(port, 'accounts.youtube.com')).not.toBe(RCODE.NXDOMAIN);
+    expect(await dnsRcode(port, 'consent.youtube.com')).not.toBe(RCODE.NXDOMAIN);
+    expect(await dnsRcode(port, 'example.org')).not.toBe(RCODE.NXDOMAIN);
+  });
+
+  it('counts exactly what it blocked and reports it through stats and status', async () => {
+    await startDns();
+    await call(sock(), 'block', { target: 'youtube' });
+    await call(sock(), 'block', { target: 'reddit.com' });
+    for (let i = 0; i < 23; i++) await dnsRcode(port, `rr${i}---sn-x${i}.googlevideo.com`);
+    for (let i = 0; i < 5; i++) await dnsRcode(port, 'old.reddit.com');
+    await dnsRcode(port, 'www.youtube.com', 28); // an AAAA lookup counts too
+    const s = await call(sock(), 'stats', { range: 'today' });
+    if (!s.ok) throw new Error(s.error.message);
+    expect(s.data.dns.blocked).toBe(29);
+    expect(s.data.dns.byRule).toEqual([
+      { kind: 'group', target: 'youtube', blocked: 24 },
+      { kind: 'domain', target: 'reddit.com', blocked: 5 },
+    ]);
+    expect(s.data.dns.bySuffix[0]).toEqual({ suffix: 'googlevideo.com', blocked: 23 });
+    expect(s.data.dns.hourOfDay.reduce((a, b) => a + b, 0)).toBe(29);
+    const st = await call(sock(), 'status', {});
+    expect(st.ok && st.data.dns.blockedToday).toBe(29);
+  });
+
+  it('stops blocking during a pass and starts again after it', async () => {
+    const clock = new FakeClock();
+    await startDns({ clock: clock.now, bootClock: clock.now, rng: seededRng(5) });
+    await call(sock(), 'block', { target: 'reddit.com' });
+    expect(await dnsRcode(port, 'old.reddit.com')).toBe(RCODE.NXDOMAIN);
+    const p = await call(sock(), 'pass_start', { target: 'reddit.com' });
+    const id = p.ok && p.data.status === 'pending' ? p.data.change.id : -1;
+    const c = await call(sock(), 'pending_challenge', { changeId: id });
+    if (!c.ok) throw new Error(c.error.message);
+    clock.advance(31 * SECOND);
+    await call(sock(), 'pending_answer', { changeId: id, response: solve(c.data.challenge) });
+    expect(await dnsRcode(port, 'old.reddit.com')).not.toBe(RCODE.NXDOMAIN);
+    await call(sock(), 'pass_end', { target: 'reddit.com' });
+    expect(await dnsRcode(port, 'old.reddit.com')).toBe(RCODE.NXDOMAIN);
+  });
+
+  it('puts the resolver settings back if someone removes them, and records tampering', async () => {
+    await startDns();
+    fs.rmSync(dropIn());
+    await waitFor(() => fs.existsSync(dropIn()));
+    const st = await call(sock(), 'status', {});
+    expect(st.ok && st.data.tamperCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it('leaves the system settings in place when stopped, and teardown restores them', async () => {
+    await startDns();
+    await daemon?.stop();
+    daemon = undefined;
+    expect(fs.existsSync(dropIn())).toBe(true);
+    expect(fs.existsSync(path.join(sb.config.stateDir, 'dns-backup.json'))).toBe(true);
+    const r = await new ResolverConfigurator({
+      root: sb.root,
+      dryRun: false,
+      backupPath: path.join(sb.config.stateDir, 'dns-backup.json'),
+      listen: { address: '127.0.0.1', port: 53 },
+      runner: { run: async () => ({ code: 0, stdout: '', stderr: '' }) },
+    }).restore();
+    expect(r.restored).toBe(true);
+    expect(fs.existsSync(dropIn())).toBe(false);
+  });
+
+  it('reports a failure instead of claiming protection when there is nowhere to forward', async () => {
+    fs.mkdirSync(path.join(sb.root, 'run/systemd/resolve'), { recursive: true });
+    fs.writeFileSync(
+      path.join(sb.root, 'run/systemd/resolve/resolv.conf'),
+      'nameserver 127.0.0.53\n',
+    );
+    await start(
+      { dnsStrategy: 'systemd-resolved' },
+      { ...sb.config, dns: { enabled: true, address: '127.0.0.1', port: 0, upstreams: [] } },
+    );
+    const st = await call(sock(), 'status', {});
+    expect(st.ok && st.data.dns).toMatchObject({ enabled: true, listening: null, inEffect: null });
+    expect(st.ok && st.data.dns.problem).toContain('no usable upstream');
+    expect(fs.existsSync(dropIn())).toBe(false);
+  });
+
+  it('the hosts layer keeps working alongside it', async () => {
+    await startDns();
+    await call(sock(), 'block', { target: 'youtube' });
+    expect(hosts()).toContain('0.0.0.0 youtube.com');
   });
 });
 

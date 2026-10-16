@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { HostsFileEnforcer } from '@hourkeep/platform';
+import * as path from 'node:path';
+import { HostsFileEnforcer, ResolverConfigurator } from '@hourkeep/platform';
 import { ConfigError, USAGE, parseConfig } from './config.js';
 import { startDaemon } from './daemon.js';
 import { createLogger } from './log.js';
@@ -25,7 +26,14 @@ async function main(): Promise<void> {
   if (command === 'teardown') {
     // Uninstall hook: remove what we manage in the hosts file and leave the database alone.
     const r = await new HostsFileEnforcer({ root: config.root, dryRun: config.dryRun }).teardown();
-    logger.log('info', 'teardown complete', { removed: r.drifted, written: r.written });
+    // Restore DNS settings from the saved record, whether or not --dns is given this time.
+    const dns = await new ResolverConfigurator({
+      root: config.root,
+      dryRun: config.dryRun,
+      backupPath: path.join(config.stateDir, 'dns-backup.json'),
+      listen: { address: config.dns.address, port: config.dns.port },
+    }).restore();
+    logger.log('info', 'teardown complete', { hostsRemoved: r.drifted, dnsRestored: dns.restored });
     return;
   }
 

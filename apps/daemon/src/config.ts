@@ -1,3 +1,4 @@
+import * as net from 'node:net';
 import * as path from 'node:path';
 import { parseArgs } from 'node:util';
 import {
@@ -30,6 +31,14 @@ export interface DaemonConfig {
   /** Challenge kinds that may be issued. */
   readonly challengeKinds: readonly ChallengeKindId[];
   readonly challengeTiming: Timing;
+  /** The DNS layer (layer 2). Off unless asked for: it forwards your lookups and edits system DNS settings. */
+  readonly dns: {
+    readonly enabled: boolean;
+    readonly address: string;
+    readonly port: number;
+    /** Forward to these instead of discovering the system's resolvers. */
+    readonly upstreams: readonly string[];
+  };
 }
 
 export const DEFAULT_CONFIG: DaemonConfig = {
@@ -43,6 +52,7 @@ export const DEFAULT_CONFIG: DaemonConfig = {
   initialSettings: { ...DEFAULT_SETTINGS, timezone: null },
   challengeKinds: CHALLENGE_KIND_IDS,
   challengeTiming: DEFAULT_TIMING,
+  dns: { enabled: false, address: '127.0.0.1', port: 53, upstreams: [] },
 };
 
 export type Command = 'run' | 'teardown' | 'version' | 'help';
@@ -50,7 +60,7 @@ export type Command = 'run' | 'teardown' | 'version' | 'help';
 export const USAGE = `hourkeepd - Hourkeep root daemon
 
 Usage: hourkeepd [options]
-       hourkeepd --teardown      remove the managed hosts block and exit (used on uninstall)
+       hourkeepd --teardown      remove the hosts block, restore DNS settings, and exit (used on uninstall)
 
 Options:
   --root <dir>            treat <dir> as the filesystem root (default /)
@@ -66,6 +76,11 @@ First-run defaults (stored in the database; later changes go through cooldown an
   --passes-per-day <n>    initial temporary passes per day (default 3)
   --pass-minutes <n>      initial pass length (default 15)
   --timezone <iana>       initial timezone for per-day counting (default: this machine's)
+
+DNS layer (blocks whole domains, so subdomains like *.googlevideo.com are covered):
+  --dns                   run the local resolver and point the system at it (off by default)
+  --dns-listen <a:p>      where it listens (default 127.0.0.1:53; the resolv.conf method needs port 53)
+  --upstream <address>    forward allowed lookups here instead of the system's resolvers (repeatable)
 
 Challenges:
   --challenge-kinds <list>        comma separated: typing,arithmetic,reflection (default all)
@@ -99,6 +114,9 @@ export function parseConfig(argv: readonly string[]): { command: Command; config
         'challenge-kinds': { type: 'string' },
         'reflection-wait-seconds': { type: 'string' },
         'min-answer-seconds': { type: 'string' },
+        dns: { type: 'boolean' },
+        'dns-listen': { type: 'string' },
+        upstream: { type: 'string', multiple: true },
         teardown: { type: 'boolean' },
         version: { type: 'boolean' },
         help: { type: 'boolean' },
@@ -151,6 +169,25 @@ export function parseConfig(argv: readonly string[]): { command: Command; config
     throw new ConfigError(`--timezone: unknown timezone "${values.timezone}"`);
   }
 
+  let dnsAddress = DEFAULT_CONFIG.dns.address;
+  let dnsPort = DEFAULT_CONFIG.dns.port;
+  if (values['dns-listen'] !== undefined) {
+    const m = /^(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})$/.exec(values['dns-listen']);
+    if (!m || net.isIPv4(m[1] as string) === false || Number(m[2]) < 1 || Number(m[2]) > 65535) {
+      throw new ConfigError('--dns-listen must look like 127.0.0.1:53');
+    }
+    dnsAddress = m[1] as string;
+    dnsPort = Number(m[2]);
+  }
+  const upstreams = values.upstream ?? [];
+  for (const u of upstreams) {
+    if (net.isIP(u) === 0) throw new ConfigError(`--upstream "${u}" is not an IP address`);
+    if (/^127\./.test(u) || u === '::1')
+      throw new ConfigError(
+        '--upstream must not be a loopback address (that would be this resolver)',
+      );
+  }
+
   const config: DaemonConfig = {
     root: values.root !== undefined ? abs('root', values.root) : DEFAULT_CONFIG.root,
     dryRun: values['dry-run'] ?? false,
@@ -174,6 +211,7 @@ export function parseConfig(argv: readonly string[]): { command: Command; config
       passMinutes: whole('pass-minutes', 1, 180, DEFAULT_SETTINGS.passMinutes),
       timezone: values.timezone ?? null,
     },
+    dns: { enabled: values.dns ?? false, address: dnsAddress, port: dnsPort, upstreams },
     challengeKinds: kinds,
     challengeTiming: {
       reflectionWaitMs:
