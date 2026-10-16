@@ -4,8 +4,9 @@ import { z } from 'zod';
  * Protocol version carried in every message. Bump on any incompatible change.
  * v2: loosening operations return a pending change; schedules, limits, settings, pending
  * changes and passes were added.
+ * v3: `status` reports the DNS layer; the `stats` operation returns analytics.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** Upper bound for one framed message, request or response, in bytes. */
 export const MAX_MESSAGE_BYTES = 64 * 1024;
@@ -95,6 +96,13 @@ export const PassStartRequest = z.strictObject({
 });
 export const PassEndRequest = z.strictObject({ ...envelope, op: z.literal('pass_end'), target });
 
+export const STATS_RANGES = ['today', 'week', 'month', 'all'] as const;
+export const StatsRequest = z.strictObject({
+  ...envelope,
+  op: z.literal('stats'),
+  range: z.enum(STATS_RANGES),
+});
+
 export const RequestSchema = z.discriminatedUnion('op', [
   StatusRequest,
   ListRequest,
@@ -111,6 +119,7 @@ export const RequestSchema = z.discriminatedUnion('op', [
   PendingAnswerRequest,
   PassStartRequest,
   PassEndRequest,
+  StatsRequest,
 ]);
 export type Request = z.infer<typeof RequestSchema>;
 export type Op = Request['op'];
@@ -192,6 +201,26 @@ export const PublicChallengeSchema = z.strictObject({
 });
 export type PublicChallengeWire = z.infer<typeof PublicChallengeSchema>;
 
+export const DnsStatusSchema = z.strictObject({
+  /** The DNS layer was switched on (`hourkeepd --dns`). */
+  enabled: z.boolean(),
+  /** `address:port` the resolver listens on, or null when it is not running. */
+  listening: z.string().nullable(),
+  strategy: z.enum(['systemd-resolved', 'resolv.conf']).nullable(),
+  /**
+   * True when a lookup through the normal system path reached the daemon's resolver. False
+   * means it is configured but something else (for example per-link DNS servers) takes priority.
+   * Null before the first check or when the layer is off.
+   */
+  inEffect: z.boolean().nullable(),
+  upstreamCount: z.number().int(),
+  /** Why the layer is not (fully) working, in words, or null. */
+  problem: z.string().nullable(),
+  /** Blocked lookups so far today. */
+  blockedToday: z.number().int(),
+});
+export type DnsStatus = z.infer<typeof DnsStatusSchema>;
+
 export const StatusData = z.strictObject({
   daemonVersion: z.string(),
   protocol: z.literal(PROTOCOL_VERSION),
@@ -205,6 +234,7 @@ export const StatusData = z.strictObject({
   pendingCount: z.number().int(),
   passesUsedToday: z.number().int(),
   passesPerDay: z.number().int(),
+  dns: DnsStatusSchema,
   /** UID the daemon saw for this connection, or null when peer credentials are unavailable. */
   callerUid: z.number().int().nullable(),
 });
@@ -257,6 +287,81 @@ export const PendingAnswerData = z.discriminatedUnion('result', [
   }),
 ]);
 
+const count = z.number().int().nonnegative();
+const dateKey = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const ruleRef = { kind: z.enum(['domain', 'group']), target: z.string() } as const;
+
+export const StatsData = z.strictObject({
+  range: z.enum(STATS_RANGES),
+  /** First and last local day covered, in `timezone`. `from` is null for "all" before any data. */
+  from: dateKey.nullable(),
+  to: dateKey,
+  timezone: z.string(),
+  generatedAt: z.number().int(),
+  dns: z.strictObject({
+    enabled: z.boolean(),
+    /** Blocked lookups. One page load makes several (A, AAAA, HTTPS), so this counts lookups, not visits. */
+    blocked: count,
+    /** Lookups forwarded to your real resolver (names are never recorded). */
+    forwarded: count,
+    byRule: z.array(z.strictObject({ ...ruleRef, blocked: count })).max(200),
+    /** Top matching suffixes, e.g. googlevideo.com. */
+    bySuffix: z.array(z.strictObject({ suffix: z.string(), blocked: count })).max(50),
+    /** Blocked lookups by local hour of day, 24 entries. */
+    hourOfDay: z.array(count).length(24),
+    daily: z.array(z.strictObject({ day: dateKey, blocked: count })).max(400),
+  }),
+  time: z.strictObject({
+    /** Seconds while the daemon was running and checking, per rule and state. */
+    rules: z
+      .array(
+        z.strictObject({
+          ...ruleRef,
+          blockingSeconds: count,
+          passSeconds: count,
+          scheduledOffSeconds: count,
+        }),
+      )
+      .max(200),
+    /** Seconds in which at least one change was waiting out its cooldown. */
+    cooldownSeconds: count,
+  }),
+  friction: z.strictObject({
+    requested: count,
+    applied: count,
+    cancelled: count,
+    expired: count,
+    passesStarted: count,
+    byChange: z
+      .array(z.strictObject({ kind: z.enum(CHANGE_KINDS), requested: count, applied: count }))
+      .max(10),
+    challenges: z
+      .array(
+        z.strictObject({
+          kind: z.enum(['typing', 'arithmetic', 'reflection', 'unknown']),
+          issued: count,
+          solved: count,
+          wrongAnswers: count,
+          /** Whole percent solved of issued, or null when none were issued. */
+          solveRate: z.number().int().min(0).max(100).nullable(),
+        }),
+      )
+      .max(10),
+  }),
+  streak: z.strictObject({
+    current: count,
+    longest: count,
+    cleanDays: count,
+    totalDays: count,
+  }),
+  tamper: z.strictObject({
+    count,
+    clockJumps: count,
+    byDay: z.array(z.strictObject({ day: dateKey, count })).max(400),
+  }),
+});
+export type StatsData = z.infer<typeof StatsData>;
+
 /** Response payload schema for each operation. */
 export const ResponseData = {
   status: StatusData,
@@ -274,6 +379,7 @@ export const ResponseData = {
   pending_answer: PendingAnswerData,
   pass_start: ChangeOutcomeData,
   pass_end: ChangeOutcomeData,
+  stats: StatsData,
 } as const satisfies Record<Op, z.ZodType>;
 
 export type DataOf<O extends Op> = z.infer<(typeof ResponseData)[O]>;

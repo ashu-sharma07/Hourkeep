@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { RCODE, TYPE, buildAnswerA, buildError, buildNxdomain, buildQuery, parseQuery, rcodeOf, type Query } from './packet.js';
+import {
+  RCODE,
+  TYPE,
+  buildAnswerA,
+  buildError,
+  buildNxdomain,
+  buildQuery,
+  parseQuery,
+  rcodeOf,
+  type Query,
+} from './packet.js';
 
 function q(packet: Buffer): Query {
   const r = parseQuery(packet);
@@ -10,7 +20,12 @@ function q(packet: Buffer): Query {
 /** A small decoder for what we build, so the tests check the wire format independently. */
 function decode(buf: Buffer) {
   const flags = buf.readUInt16BE(2);
-  const counts = { qd: buf.readUInt16BE(4), an: buf.readUInt16BE(6), ns: buf.readUInt16BE(8), ar: buf.readUInt16BE(10) };
+  const counts = {
+    qd: buf.readUInt16BE(4),
+    an: buf.readUInt16BE(6),
+    ns: buf.readUInt16BE(8),
+    ar: buf.readUInt16BE(10),
+  };
   let pos = 12;
   const skipName = (): void => {
     for (;;) {
@@ -53,7 +68,11 @@ function decode(buf: Buffer) {
 describe('parseQuery', () => {
   it('reads name, type and class, lower-casing the name', () => {
     const r = q(buildQuery('Rr1---SN-ab5l6n7y.GoogleVideo.com', TYPE.AAAA, 0xbeef));
-    expect(r).toMatchObject({ id: 0xbeef, question: { name: 'rr1---sn-ab5l6n7y.googlevideo.com', type: TYPE.AAAA, cls: 1 }, hasEdns: false });
+    expect(r).toMatchObject({
+      id: 0xbeef,
+      question: { name: 'rr1---sn-ab5l6n7y.googlevideo.com', type: TYPE.AAAA, cls: 1 },
+      hasEdns: false,
+    });
   });
 
   it('notices EDNS', () => {
@@ -64,20 +83,71 @@ describe('parseQuery', () => {
   it('accepts the root name and a long but legal name', () => {
     expect(q(buildQuery('', TYPE.A)).question.name).toBe('');
     const label = 'a'.repeat(63);
-    expect(q(buildQuery(`${label}.${label}.${label}.com`, TYPE.A)).question.name.length).toBeGreaterThan(190);
+    expect(
+      q(buildQuery(`${label}.${label}.${label}.com`, TYPE.A)).question.name.length,
+    ).toBeGreaterThan(190);
   });
 
   it.each<[string, () => Buffer, string]>([
     ['empty', () => Buffer.alloc(0), 'short'],
     ['11 bytes', () => Buffer.alloc(11), 'short'],
-    ['a response', () => { const b = buildQuery('a.example', 1); b[2] = (b[2] as number) | 0x80; return b; }, 'response'],
-    ['a non-QUERY opcode', () => { const b = buildQuery('a.example', 1); b[2] = (b[2] as number) | (4 << 3); return b; }, 'opcode'],
-    ['two questions', () => { const b = buildQuery('a.example', 1); b.writeUInt16BE(2, 4); return b; }, 'malformed'],
-    ['no question', () => { const b = buildQuery('a.example', 1); b.writeUInt16BE(0, 4); return b; }, 'malformed'],
+    [
+      'a response',
+      () => {
+        const b = buildQuery('a.example', 1);
+        b[2] = (b[2] as number) | 0x80;
+        return b;
+      },
+      'response',
+    ],
+    [
+      'a non-QUERY opcode',
+      () => {
+        const b = buildQuery('a.example', 1);
+        b[2] = (b[2] as number) | (4 << 3);
+        return b;
+      },
+      'opcode',
+    ],
+    [
+      'two questions',
+      () => {
+        const b = buildQuery('a.example', 1);
+        b.writeUInt16BE(2, 4);
+        return b;
+      },
+      'malformed',
+    ],
+    [
+      'no question',
+      () => {
+        const b = buildQuery('a.example', 1);
+        b.writeUInt16BE(0, 4);
+        return b;
+      },
+      'malformed',
+    ],
     ['truncated name', () => buildQuery('a.example', 1).subarray(0, 16), 'malformed'],
     ['missing type and class', () => buildQuery('a.example', 1).subarray(0, -3), 'malformed'],
-    ['compression pointer in the question', () => { const b = buildQuery('a.example', 1); b[12] = 0xc0; b[13] = 0; return b; }, 'malformed'],
-    ['label longer than 63', () => { const b = buildQuery('a.example', 1); b[12] = 64; return b; }, 'malformed'],
+    [
+      'compression pointer in the question',
+      () => {
+        const b = buildQuery('a.example', 1);
+        b[12] = 0xc0;
+        b[13] = 0;
+        return b;
+      },
+      'malformed',
+    ],
+    [
+      'label longer than 63',
+      () => {
+        const b = buildQuery('a.example', 1);
+        b[12] = 64;
+        return b;
+      },
+      'malformed',
+    ],
   ])('rejects %s', (_n, make, reason) => {
     const r = parseQuery(make());
     expect(r.ok).toBe(false);
@@ -103,14 +173,24 @@ describe('buildNxdomain', () => {
   const d = decode(out);
 
   it('is a well-formed NXDOMAIN reply to the same id with recursion flags set', () => {
-    expect(d).toMatchObject({ id: 0x42, qr: true, rd: true, ra: true, aa: false, tc: false, rcode: RCODE.NXDOMAIN });
+    expect(d).toMatchObject({
+      id: 0x42,
+      qr: true,
+      rd: true,
+      ra: true,
+      aa: false,
+      tc: false,
+      rcode: RCODE.NXDOMAIN,
+    });
     expect(rcodeOf(out)).toBe(3);
     expect(d.end).toBe(out.length);
   });
 
   it('echoes the question byte for byte, keeping the case the client used (0x20 encoding)', () => {
     expect(d.questions).toEqual([{ type: TYPE.A }]);
-    expect(out.subarray(12, q(query).questionEnd)).toEqual(query.subarray(12, q(query).questionEnd));
+    expect(out.subarray(12, q(query).questionEnd)).toEqual(
+      query.subarray(12, q(query).questionEnd),
+    );
     expect(out.includes(Buffer.from('GoogleVideo'))).toBe(true);
   });
 
@@ -163,6 +243,9 @@ describe('buildAnswerA', () => {
 
   it('gives other types an empty NOERROR', () => {
     const p = buildQuery('canary.example', TYPE.AAAA, 3);
-    expect(decode(buildAnswerA(p, q(p), '127.0.0.1'))).toMatchObject({ rcode: RCODE.NOERROR, counts: { an: 0 } });
+    expect(decode(buildAnswerA(p, q(p), '127.0.0.1'))).toMatchObject({
+      rcode: RCODE.NOERROR,
+      counts: { an: 0 },
+    });
   });
 });

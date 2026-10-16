@@ -1,7 +1,14 @@
 import * as dgram from 'node:dgram';
 import * as net from 'node:net';
 import type { Match, SuffixMatcher } from './matcher.js';
-import { RCODE, buildAnswerA, buildError, buildNxdomain, parseQuery, type Query } from './packet.js';
+import {
+  RCODE,
+  buildAnswerA,
+  buildError,
+  buildNxdomain,
+  parseQuery,
+  type Query,
+} from './packet.js';
 
 export interface Upstream {
   readonly address: string;
@@ -45,10 +52,16 @@ export interface DnsServer<O> {
   close(): Promise<void>;
 }
 
-const sameServer = (a: Upstream, address: string, port: number): boolean => a.address === address && (a.port ?? 53) === port;
+const sameServer = (a: Upstream, address: string, port: number): boolean =>
+  a.address === address && (a.port ?? 53) === port;
 
 /** Send `packet` to one upstream over UDP from a fresh socket (fresh source port per query). */
-function askUdp(up: Upstream, packet: Buffer, id: number, timeoutMs: number): Promise<Buffer | null> {
+function askUdp(
+  up: Upstream,
+  packet: Buffer,
+  id: number,
+  timeoutMs: number,
+): Promise<Buffer | null> {
   return new Promise((resolve) => {
     const family = up.address.includes(':') ? 'udp6' : 'udp4';
     const sock = dgram.createSocket(family);
@@ -64,7 +77,8 @@ function askUdp(up: Upstream, packet: Buffer, id: number, timeoutMs: number): Pr
     sock.on('error', () => finish(null));
     sock.on('message', (msg, rinfo) => {
       // Only the server we asked, and only an answer to this query.
-      if (rinfo.address === up.address && msg.length >= 12 && msg.readUInt16BE(0) === id) finish(msg);
+      if (rinfo.address === up.address && msg.length >= 12 && msg.readUInt16BE(0) === id)
+        finish(msg);
     });
     sock.send(packet, up.port ?? 53, up.address, (err) => {
       if (err) finish(null);
@@ -73,7 +87,12 @@ function askUdp(up: Upstream, packet: Buffer, id: number, timeoutMs: number): Pr
 }
 
 /** Same over TCP: two byte length prefix each way. */
-function askTcp(up: Upstream, packet: Buffer, id: number, timeoutMs: number): Promise<Buffer | null> {
+function askTcp(
+  up: Upstream,
+  packet: Buffer,
+  id: number,
+  timeoutMs: number,
+): Promise<Buffer | null> {
   return new Promise((resolve) => {
     const sock = net.connect({ host: up.address, port: up.port ?? 53 });
     let done = false;
@@ -156,7 +175,11 @@ export async function startDnsServer<O>(options: DnsServerOptions<O>): Promise<D
     const parsed = parseQuery(packet);
     if (!parsed.ok) {
       if (parsed.id === null || parsed.reason === 'response') return null; // not worth an answer
-      return buildError(parsed.id, parsed.flags, parsed.reason === 'opcode' ? RCODE.NOTIMP : RCODE.FORMERR);
+      return buildError(
+        parsed.id,
+        parsed.flags,
+        parsed.reason === 'opcode' ? RCODE.NOTIMP : RCODE.FORMERR,
+      );
     }
     const q: Query = parsed.query;
     const m: Match<O> = matcher.match(q.question.name);
@@ -164,7 +187,10 @@ export async function startDnsServer<O>(options: DnsServerOptions<O>): Promise<D
       emit({ kind: 'blocked', suffix: m.suffix, owner: m.owner, qtype: q.question.type });
       return buildNxdomain(packet, q);
     }
-    if (options.canary !== undefined && (q.question.name === options.canary || q.question.name.endsWith(`.${options.canary}`))) {
+    if (
+      options.canary !== undefined &&
+      (q.question.name === options.canary || q.question.name.endsWith(`.${options.canary}`))
+    ) {
       emit({ kind: 'canary' });
       return buildAnswerA(packet, q, '127.0.0.1');
     }
@@ -176,7 +202,9 @@ export async function startDnsServer<O>(options: DnsServerOptions<O>): Promise<D
     try {
       emit({ kind: 'forwarded' });
       for (const up of [...upstreams]) {
-        const answer = viaTcp ? await askTcp(up, packet, q.id, timeoutMs) : await askUdp(up, packet, q.id, timeoutMs);
+        const answer = viaTcp
+          ? await askTcp(up, packet, q.id, timeoutMs)
+          : await askUdp(up, packet, q.id, timeoutMs);
         if (answer) return answer;
       }
       emit({ kind: 'failed' });

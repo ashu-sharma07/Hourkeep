@@ -2,7 +2,14 @@
 // bytes and never parsed beyond the question; blocked ones get a response built here.
 
 export const TYPE = { A: 1, SOA: 6, AAAA: 28, OPT: 41, HTTPS: 65 } as const;
-export const RCODE = { NOERROR: 0, FORMERR: 1, SERVFAIL: 2, NXDOMAIN: 3, NOTIMP: 4, REFUSED: 5 } as const;
+export const RCODE = {
+  NOERROR: 0,
+  FORMERR: 1,
+  SERVFAIL: 2,
+  NXDOMAIN: 3,
+  NOTIMP: 4,
+  REFUSED: 5,
+} as const;
 
 export interface Question {
   /** Lower-case, no trailing dot. */
@@ -28,7 +35,12 @@ const MAX_NAME = 255;
 /** Why a packet is not a query we can answer. `id` is set when at least the header was readable. */
 export type ParseResult =
   | { readonly ok: true; readonly query: Query }
-  | { readonly ok: false; readonly reason: 'short' | 'response' | 'opcode' | 'malformed'; readonly id: number | null; readonly flags: number };
+  | {
+      readonly ok: false;
+      readonly reason: 'short' | 'response' | 'opcode' | 'malformed';
+      readonly id: number | null;
+      readonly flags: number;
+    };
 
 /** Read a question name. Compression pointers are not allowed in a question. */
 function readName(buf: Buffer, start: number): { name: string; end: number } | null {
@@ -67,13 +79,21 @@ export function parseQuery(buf: Buffer): ParseResult {
   const cls = buf.readUInt16BE(name.end + 2);
   const questionEnd = name.end + 4;
   const arcount = buf.readUInt16BE(10);
-  const hasEdns = arcount > 0 && buf[questionEnd] === 0 && buf.length >= questionEnd + 3 && buf.readUInt16BE(questionEnd + 1) === TYPE.OPT;
-  return { ok: true, query: { id, flags, question: { name: name.name, type, cls }, questionEnd, hasEdns, arcount } };
+  const hasEdns =
+    arcount > 0 &&
+    buf[questionEnd] === 0 &&
+    buf.length >= questionEnd + 3 &&
+    buf.readUInt16BE(questionEnd + 1) === TYPE.OPT;
+  return {
+    ok: true,
+    query: { id, flags, question: { name: name.name, type, cls }, questionEnd, hasEdns, arcount },
+  };
 }
 
 function encodeName(name: string): Buffer {
   const parts: Buffer[] = [];
-  for (const label of name.split('.').filter(Boolean)) parts.push(Buffer.from([label.length]), Buffer.from(label, 'latin1'));
+  for (const label of name.split('.').filter(Boolean))
+    parts.push(Buffer.from([label.length]), Buffer.from(label, 'latin1'));
   parts.push(Buffer.from([0]));
   return Buffer.concat(parts);
 }
@@ -102,7 +122,11 @@ function soaRecord(): Buffer {
   return Buffer.concat([head, rdata]);
 }
 
-function header(q: { id: number; flags: number }, rcode: number, counts: { an: number; ns: number; ar: number }): Buffer {
+function header(
+  q: { id: number; flags: number },
+  rcode: number,
+  counts: { an: number; ns: number; ar: number },
+): Buffer {
   const h = Buffer.alloc(HEADER);
   h.writeUInt16BE(q.id, 0);
   // QR=1, opcode and RD copied, RA=1, AA/TC/AD/CD cleared
@@ -116,13 +140,23 @@ function header(q: { id: number; flags: number }, rcode: number, counts: { an: n
 
 /** NXDOMAIN for a blocked name: the question echoed exactly (case included), a 1 second SOA, EDNS if asked. */
 export function buildNxdomain(packet: Buffer, q: Query): Buffer {
-  const parts = [header(q, RCODE.NXDOMAIN, { an: 0, ns: 1, ar: q.hasEdns ? 1 : 0 }), packet.subarray(HEADER, q.questionEnd), soaRecord()];
+  const parts = [
+    header(q, RCODE.NXDOMAIN, { an: 0, ns: 1, ar: q.hasEdns ? 1 : 0 }),
+    packet.subarray(HEADER, q.questionEnd),
+    soaRecord(),
+  ];
   if (q.hasEdns) parts.push(OPT_RECORD);
   return Buffer.concat(parts);
 }
 
 /** An error reply (SERVFAIL, FORMERR, NOTIMP) that echoes the question when there is one. */
-export function buildError(id: number, flags: number, rcode: number, packet?: Buffer, q?: Query): Buffer {
+export function buildError(
+  id: number,
+  flags: number,
+  rcode: number,
+  packet?: Buffer,
+  q?: Query,
+): Buffer {
   const hasQ = packet !== undefined && q !== undefined;
   const h = header({ id, flags }, rcode, { an: 0, ns: 0, ar: 0 });
   h.writeUInt16BE(hasQ ? 1 : 0, 4);
@@ -142,7 +176,10 @@ export function buildAnswerA(packet: Buffer, q: Query, address: string): Buffer 
     rr.writeUInt16BE(4, 10);
     Buffer.from(octets).copy(rr, 12);
   }
-  const parts = [header(q, RCODE.NOERROR, { an: isA ? 1 : 0, ns: 0, ar: q.hasEdns ? 1 : 0 }), packet.subarray(HEADER, q.questionEnd)];
+  const parts = [
+    header(q, RCODE.NOERROR, { an: isA ? 1 : 0, ns: 0, ar: q.hasEdns ? 1 : 0 }),
+    packet.subarray(HEADER, q.questionEnd),
+  ];
   if (isA) parts.push(rr);
   if (q.hasEdns) parts.push(OPT_RECORD);
   return Buffer.concat(parts);
@@ -154,7 +191,12 @@ export function rcodeOf(packet: Buffer): number | null {
 }
 
 /** Build a plain query packet (for tests and for the self-test). */
-export function buildQuery(name: string, type: number, id = 0x1234, opts: { edns?: boolean; rd?: boolean } = {}): Buffer {
+export function buildQuery(
+  name: string,
+  type: number,
+  id = 0x1234,
+  opts: { edns?: boolean; rd?: boolean } = {},
+): Buffer {
   const h = Buffer.alloc(HEADER);
   h.writeUInt16BE(id, 0);
   h.writeUInt16BE(opts.rd === false ? 0 : 0x0100, 2);

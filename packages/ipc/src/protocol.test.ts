@@ -25,8 +25,8 @@ const schedule = {
   },
 };
 
-it('is protocol version 2', () => {
-  expect(PROTOCOL_VERSION).toBe(2);
+it('is protocol version 3', () => {
+  expect(PROTOCOL_VERSION).toBe(3);
 });
 
 describe('RequestSchema accepts', () => {
@@ -48,6 +48,8 @@ describe('RequestSchema accepts', () => {
     { op: 'pending_answer', changeId: 3, response: 'some answer' },
     { op: 'pass_start', target: 'youtube' },
     { op: 'pass_end', target: 'youtube' },
+    { op: 'stats', range: 'today' },
+    { op: 'stats', range: 'all' },
   ])('%j', (rest) => {
     expect(RequestSchema.safeParse({ ...base, ...rest }).success).toBe(true);
   });
@@ -61,7 +63,9 @@ describe('RequestSchema rejects', () => {
     ['missing id', { v: PROTOCOL_VERSION, op: 'status' }],
     ['empty id', { v: PROTOCOL_VERSION, id: '', op: 'status' }],
     ['overlong id', { v: PROTOCOL_VERSION, id: 'x'.repeat(65), op: 'status' }],
-    ['old version', { v: 1, id: 'a', op: 'status' }],
+    ['old version', { v: 2, id: 'a', op: 'status' }],
+    ['stats without a range', { ...base, op: 'stats' }],
+    ['stats with an unknown range', { ...base, op: 'stats', range: 'decade' }],
     ['version as string', { v: String(PROTOCOL_VERSION), id: 'a', op: 'status' }],
     ['block without target', { ...base, op: 'block' }],
     ['empty target', { ...base, op: 'block', target: '' }],
@@ -144,6 +148,165 @@ describe('RequestSchema rejects', () => {
   });
 });
 
+const dns = {
+  enabled: true,
+  listening: '127.0.0.1:53',
+  strategy: 'systemd-resolved',
+  inEffect: true,
+  upstreamCount: 2,
+  problem: null,
+  blockedToday: 7,
+};
+
+const stats = {
+  range: 'week',
+  from: '2026-10-10',
+  to: '2026-10-16',
+  timezone: 'UTC',
+  generatedAt: 1,
+  dns: {
+    enabled: true,
+    blocked: 12,
+    forwarded: 3400,
+    byRule: [{ kind: 'group', target: 'youtube', blocked: 12 }],
+    bySuffix: [{ suffix: 'googlevideo.com', blocked: 9 }],
+    hourOfDay: new Array(24).fill(0),
+    daily: [{ day: '2026-10-16', blocked: 12 }],
+  },
+  time: {
+    rules: [
+      {
+        kind: 'group',
+        target: 'youtube',
+        blockingSeconds: 100,
+        passSeconds: 20,
+        scheduledOffSeconds: 0,
+      },
+    ],
+    cooldownSeconds: 30,
+  },
+  friction: {
+    requested: 3,
+    applied: 1,
+    cancelled: 1,
+    expired: 1,
+    passesStarted: 2,
+    byChange: [{ kind: 'remove_rule', requested: 3, applied: 1 }],
+    challenges: [{ kind: 'typing', issued: 2, solved: 1, wrongAnswers: 3, solveRate: 50 }],
+  },
+  streak: { current: 3, longest: 5, cleanDays: 6, totalDays: 7 },
+  tamper: { count: 1, clockJumps: 0, byDay: [{ day: '2026-10-12', count: 1 }] },
+};
+
+describe('stats and DNS status', () => {
+  const ok = (op: Op, data: unknown) =>
+    responseSchema(op).safeParse({ ...base, ok: true, data }).success;
+
+  it('accepts a full stats reply', () => {
+    expect(ok('stats', stats)).toBe(true);
+  });
+
+  it.each([
+    [
+      'hourOfDay with 23 entries',
+      { ...stats, dns: { ...stats.dns, hourOfDay: new Array(23).fill(0) } },
+    ],
+    ['a negative count', { ...stats, dns: { ...stats.dns, blocked: -1 } }],
+    ['a fractional count', { ...stats, dns: { ...stats.dns, blocked: 1.5 } }],
+    ['a bad date', { ...stats, to: '16/10/2026' }],
+    [
+      'an unknown challenge kind',
+      {
+        ...stats,
+        friction: {
+          ...stats.friction,
+          challenges: [{ kind: 'riddle', issued: 1, solved: 0, wrongAnswers: 0, solveRate: 0 }],
+        },
+      },
+    ],
+    [
+      'solveRate above 100',
+      {
+        ...stats,
+        friction: {
+          ...stats.friction,
+          challenges: [{ kind: 'typing', issued: 1, solved: 1, wrongAnswers: 0, solveRate: 101 }],
+        },
+      },
+    ],
+    [
+      'an extra field (like a queried name)',
+      { ...stats, dns: { ...stats.dns, names: ['example.org'] } },
+    ],
+    ['a missing section', { ...stats, streak: undefined }],
+  ])('rejects %s', (_n, data) => {
+    expect(ok('stats', data)).toBe(false);
+  });
+
+  it('allows a quiet range: no data, null rates, null from', () => {
+    expect(
+      ok('stats', {
+        ...stats,
+        from: null,
+        dns: { ...stats.dns, blocked: 0, forwarded: 0, byRule: [], bySuffix: [], daily: [] },
+        time: { rules: [], cooldownSeconds: 0 },
+        friction: {
+          ...stats.friction,
+          challenges: [{ kind: 'typing', issued: 0, solved: 0, wrongAnswers: 0, solveRate: null }],
+        },
+        tamper: { count: 0, clockJumps: 0, byDay: [] },
+      }),
+    ).toBe(true);
+  });
+
+  it('bounds the size of every list so a reply fits one message', () => {
+    expect(
+      ok('stats', {
+        ...stats,
+        dns: {
+          ...stats.dns,
+          bySuffix: Array.from({ length: 51 }, (_, i) => ({ suffix: `s${i}.example`, blocked: 1 })),
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it('dns status can say why it is not working', () => {
+    const okStatus = (d: unknown) =>
+      ok('status', {
+        daemonVersion: 'x',
+        protocol: PROTOCOL_VERSION,
+        dryRun: false,
+        ruleCount: 0,
+        blockedDomainCount: 0,
+        lastReconcileAt: null,
+        tamperCount: 0,
+        lastTamperAt: null,
+        pendingCount: 0,
+        passesUsedToday: 0,
+        passesPerDay: 3,
+        dns: d,
+        callerUid: null,
+      });
+    expect(okStatus({ ...dns, inEffect: false, problem: 'another resolver has priority' })).toBe(
+      true,
+    );
+    expect(
+      okStatus({
+        enabled: false,
+        listening: null,
+        strategy: null,
+        inEffect: null,
+        upstreamCount: 0,
+        problem: null,
+        blockedToday: 0,
+      }),
+    ).toBe(true);
+    expect(okStatus({ ...dns, strategy: 'dnsmasq' })).toBe(false);
+    expect(okStatus(undefined)).toBe(false);
+  });
+});
+
 describe('responses', () => {
   const view = {
     id: 3,
@@ -181,6 +344,7 @@ describe('responses', () => {
         pendingCount: 1,
         passesUsedToday: 0,
         passesPerDay: 3,
+        dns: dns,
         callerUid: 1000,
       }),
     ).toBe(true);

@@ -13,18 +13,38 @@ const yt = new SuffixMatcher({
 
 describe('SuffixMatcher', () => {
   it('blocks the domain itself and every subdomain at any depth', () => {
-    for (const n of ['googlevideo.com', 'rr1---sn-ab5l6n7y.googlevideo.com', 'a.b.c.d.googlevideo.com', 'www.youtube.com', 'm.youtube.com']) {
+    for (const n of [
+      'googlevideo.com',
+      'rr1---sn-ab5l6n7y.googlevideo.com',
+      'a.b.c.d.googlevideo.com',
+      'www.youtube.com',
+      'm.youtube.com',
+    ]) {
       expect(yt.match(n)).toMatchObject({ blocked: true });
     }
   });
 
   it('reports which suffix matched and who owns it', () => {
-    expect(yt.match('rr1.googlevideo.com')).toEqual({ blocked: true, suffix: 'googlevideo.com', owner: owner('googlevideo') });
-    expect(yt.match('youtubei.googleapis.com')).toEqual({ blocked: true, suffix: 'youtubei.googleapis.com', owner: owner('api') });
+    expect(yt.match('rr1.googlevideo.com')).toEqual({
+      blocked: true,
+      suffix: 'googlevideo.com',
+      owner: owner('googlevideo'),
+    });
+    expect(yt.match('youtubei.googleapis.com')).toEqual({
+      blocked: true,
+      suffix: 'youtubei.googleapis.com',
+      owner: owner('api'),
+    });
   });
 
   it('matches whole labels only, never a substring', () => {
-    for (const n of ['notgooglevideo.com', 'googlevideo.com.evil.example', 'myyoutube.com', 'youtube.com.au', 'youtube.co']) {
+    for (const n of [
+      'notgooglevideo.com',
+      'googlevideo.com.evil.example',
+      'myyoutube.com',
+      'youtube.com.au',
+      'youtube.co',
+    ]) {
       expect(yt.match(n)).toEqual({ blocked: false });
     }
   });
@@ -44,22 +64,36 @@ describe('SuffixMatcher', () => {
 
   it('a more specific block beats a broader exception', () => {
     const m = new SuffixMatcher({
-      block: [{ suffix: 'youtube.com', owner: 1 }, { suffix: 'ads.accounts.youtube.com', owner: 2 }],
+      block: [
+        { suffix: 'youtube.com', owner: 1 },
+        { suffix: 'ads.accounts.youtube.com', owner: 2 },
+      ],
       allow: ['accounts.youtube.com'],
     });
     expect(m.match('accounts.youtube.com')).toEqual({ blocked: false });
-    expect(m.match('ads.accounts.youtube.com')).toEqual({ blocked: true, suffix: 'ads.accounts.youtube.com', owner: 2 });
+    expect(m.match('ads.accounts.youtube.com')).toEqual({
+      blocked: true,
+      suffix: 'ads.accounts.youtube.com',
+      owner: 2,
+    });
     expect(m.match('x.ads.accounts.youtube.com')).toMatchObject({ blocked: true, owner: 2 });
   });
 
   it('on a tie the block wins', () => {
-    const m = new SuffixMatcher({ block: [{ suffix: 'a.example', owner: 1 }], allow: ['a.example'] });
+    const m = new SuffixMatcher({
+      block: [{ suffix: 'a.example', owner: 1 }],
+      allow: ['a.example'],
+    });
     expect(m.match('a.example')).toMatchObject({ blocked: true });
   });
 
   it('ignores case and a trailing dot', () => {
     expect(yt.match('RR1.GoogleVideo.COM.')).toMatchObject({ blocked: true });
-    expect(new SuffixMatcher({ block: [{ suffix: 'Example.COM.', owner: 1 }], allow: [] }).match('a.example.com')).toMatchObject({ blocked: true });
+    expect(
+      new SuffixMatcher({ block: [{ suffix: 'Example.COM.', owner: 1 }], allow: [] }).match(
+        'a.example.com',
+      ),
+    ).toMatchObject({ blocked: true });
   });
 
   it('allows everything when empty, and copes with odd names', () => {

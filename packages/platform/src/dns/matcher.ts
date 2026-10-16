@@ -5,7 +5,9 @@ export interface SuffixSpec<O> {
   readonly allow: readonly string[];
 }
 
-export type Match<O> = { readonly blocked: false } | { readonly blocked: true; readonly suffix: string; readonly owner: O };
+export type Match<O> =
+  | { readonly blocked: false }
+  | { readonly blocked: true; readonly suffix: string; readonly owner: O };
 
 /**
  * Whole-domain blocking. A name is blocked when the most specific rule that covers it

@@ -31,7 +31,12 @@ async function fakeUpstream(initial: Fake['mode'] = 'answer'): Promise<Fake> {
   const port = udp.address().port;
   const tcp = net.createServer();
   await new Promise<void>((r) => tcp.listen(port, '127.0.0.1', r));
-  const fake: Fake = { port, seen: [], mode: initial, close: () => new Promise((r) => udp.close(() => tcp.close(() => r()))) };
+  const fake: Fake = {
+    port,
+    seen: [],
+    mode: initial,
+    close: () => new Promise((r) => udp.close(() => tcp.close(() => r()))),
+  };
   const answerFor = (packet: Buffer, viaUdp: boolean): Buffer | null => {
     const p = parseQuery(packet);
     if (!p.ok) return null;
@@ -111,7 +116,9 @@ afterEach(async () => {
   while (cleanup.length) await cleanup.pop()?.();
 });
 
-async function start(over: { upstreams?: Upstream[]; canary?: string; timeout?: number; maxInflight?: number } = {}) {
+async function start(
+  over: { upstreams?: Upstream[]; canary?: string; timeout?: number; maxInflight?: number } = {},
+) {
   const fake = await fakeUpstream();
   cleanup.push(() => fake.close());
   const events: QueryEvent<Owner>[] = [];
@@ -134,7 +141,12 @@ async function start(over: { upstreams?: Upstream[]; canary?: string; timeout?: 
 describe('blocking', () => {
   it('answers a blocked name and every subdomain with NXDOMAIN, without asking upstream', async () => {
     const { server, fake, events } = await start();
-    for (const name of ['googlevideo.com', 'rr1---sn-ab5l6n7y.googlevideo.com', 'a.b.c.googlevideo.com', 'WWW.Reddit.COM']) {
+    for (const name of [
+      'googlevideo.com',
+      'rr1---sn-ab5l6n7y.googlevideo.com',
+      'a.b.c.googlevideo.com',
+      'WWW.Reddit.COM',
+    ]) {
       const r = await udpAsk(server.port, buildQuery(name, TYPE.A));
       expect(rcodeOf(r as Buffer)).toBe(RCODE.NXDOMAIN);
     }
@@ -145,9 +157,17 @@ describe('blocking', () => {
   it('blocks every query type for a blocked name', async () => {
     const { server, events } = await start();
     for (const type of [TYPE.A, TYPE.AAAA, TYPE.HTTPS, 15, 16]) {
-      expect(rcodeOf((await udpAsk(server.port, buildQuery('x.googlevideo.com', type))) as Buffer)).toBe(RCODE.NXDOMAIN);
+      expect(
+        rcodeOf((await udpAsk(server.port, buildQuery('x.googlevideo.com', type))) as Buffer),
+      ).toBe(RCODE.NXDOMAIN);
     }
-    expect(events.map((e) => (e.kind === 'blocked' ? e.qtype : -1))).toEqual([TYPE.A, TYPE.AAAA, TYPE.HTTPS, 15, 16]);
+    expect(events.map((e) => (e.kind === 'blocked' ? e.qtype : -1))).toEqual([
+      TYPE.A,
+      TYPE.AAAA,
+      TYPE.HTTPS,
+      15,
+      16,
+    ]);
   });
 
   it('reports the matching suffix and its owner, so a flood of random names counts under one rule', async () => {
@@ -181,8 +201,10 @@ describe('counting is exact', () => {
   it('counts every blocked lookup and every forwarded one, concurrently', async () => {
     const { server, fake, events } = await start();
     const asks: Promise<Buffer | null>[] = [];
-    for (let i = 0; i < 60; i++) asks.push(udpAsk(server.port, buildQuery(`rr${i}.googlevideo.com`, TYPE.A, i)));
-    for (let i = 0; i < 25; i++) asks.push(udpAsk(server.port, buildQuery(`site${i}.example.org`, TYPE.A, 1000 + i)));
+    for (let i = 0; i < 60; i++)
+      asks.push(udpAsk(server.port, buildQuery(`rr${i}.googlevideo.com`, TYPE.A, i)));
+    for (let i = 0; i < 25; i++)
+      asks.push(udpAsk(server.port, buildQuery(`site${i}.example.org`, TYPE.A, 1000 + i)));
     const answers = await Promise.all(asks);
     expect(answers.every((a) => a !== null)).toBe(true);
     expect(events.filter((e) => e.kind === 'blocked')).toHaveLength(60);
@@ -209,7 +231,9 @@ describe('the self-test name', () => {
   it('covers the domain and any name under it', async () => {
     const { server, fake, events } = await start({ canary: 'selftest.hourkeep.dev' });
     for (const name of ['selftest.hourkeep.dev', 'hk-12345.selftest.hourkeep.dev']) {
-      expect(answerIp((await udpAsk(server.port, buildQuery(name, TYPE.A))) as Buffer)).toBe('127.0.0.1');
+      expect(answerIp((await udpAsk(server.port, buildQuery(name, TYPE.A))) as Buffer)).toBe(
+        '127.0.0.1',
+      );
     }
     await udpAsk(server.port, buildQuery('notselftest.hourkeep.dev', TYPE.A));
     expect(fake.seen).toEqual(['notselftest.hourkeep.dev']);
@@ -242,7 +266,9 @@ describe('bad input', () => {
     const resp = buildQuery('a.example', 1);
     resp[2] = (resp[2] as number) | 0x80;
     expect(await udpAsk(server.port, resp, 200)).toBeNull();
-    expect(rcodeOf((await udpAsk(server.port, buildQuery('x.reddit.com', 1))) as Buffer)).toBe(RCODE.NXDOMAIN);
+    expect(rcodeOf((await udpAsk(server.port, buildQuery('x.reddit.com', 1))) as Buffer)).toBe(
+      RCODE.NXDOMAIN,
+    );
     expect(errors).toEqual([]);
   });
 });
@@ -253,7 +279,12 @@ describe('when the upstream misbehaves', () => {
     cleanup.push(() => dead.close());
     const live = await fakeUpstream();
     cleanup.push(() => live.close());
-    const { server } = await start({ upstreams: [{ address: '127.0.0.1', port: dead.port }, { address: '127.0.0.1', port: live.port }] });
+    const { server } = await start({
+      upstreams: [
+        { address: '127.0.0.1', port: dead.port },
+        { address: '127.0.0.1', port: live.port },
+      ],
+    });
     const r = (await udpAsk(server.port, buildQuery('example.org', TYPE.A), 3000)) as Buffer;
     expect(rcodeOf(r)).toBe(RCODE.NOERROR);
     expect(dead.seen).toEqual(['example.org']);
@@ -263,7 +294,10 @@ describe('when the upstream misbehaves', () => {
   it('answers SERVFAIL when nothing answers, and counts a failure', async () => {
     const dead = await fakeUpstream('silent');
     cleanup.push(() => dead.close());
-    const { server, events } = await start({ upstreams: [{ address: '127.0.0.1', port: dead.port }], timeout: 150 });
+    const { server, events } = await start({
+      upstreams: [{ address: '127.0.0.1', port: dead.port }],
+      timeout: 150,
+    });
     const r = (await udpAsk(server.port, buildQuery('example.org', TYPE.A, 0x33), 3000)) as Buffer;
     expect(rcodeOf(r)).toBe(RCODE.SERVFAIL);
     expect(r.readUInt16BE(0)).toBe(0x33);
@@ -272,14 +306,22 @@ describe('when the upstream misbehaves', () => {
 
   it('answers SERVFAIL at once with no upstreams, but still blocks', async () => {
     const { server } = await start({ upstreams: [] });
-    expect(rcodeOf((await udpAsk(server.port, buildQuery('example.org', 1))) as Buffer)).toBe(RCODE.SERVFAIL);
-    expect(rcodeOf((await udpAsk(server.port, buildQuery('x.reddit.com', 1))) as Buffer)).toBe(RCODE.NXDOMAIN);
+    expect(rcodeOf((await udpAsk(server.port, buildQuery('example.org', 1))) as Buffer)).toBe(
+      RCODE.SERVFAIL,
+    );
+    expect(rcodeOf((await udpAsk(server.port, buildQuery('x.reddit.com', 1))) as Buffer)).toBe(
+      RCODE.NXDOMAIN,
+    );
   });
 
   it('sheds load past the in-flight limit rather than queueing forever', async () => {
     const dead = await fakeUpstream('silent');
     cleanup.push(() => dead.close());
-    const { server } = await start({ upstreams: [{ address: '127.0.0.1', port: dead.port }], timeout: 600, maxInflight: 1 });
+    const { server } = await start({
+      upstreams: [{ address: '127.0.0.1', port: dead.port }],
+      timeout: 600,
+      maxInflight: 1,
+    });
     const first = udpAsk(server.port, buildQuery('one.example.org', 1), 3000);
     await new Promise((r) => setTimeout(r, 50));
     const second = (await udpAsk(server.port, buildQuery('two.example.org', 1), 3000)) as Buffer;
@@ -290,7 +332,9 @@ describe('when the upstream misbehaves', () => {
   it('never forwards to itself', async () => {
     const { server, events } = await start({ upstreams: [] });
     server.setUpstreams([{ address: '127.0.0.1', port: server.port }]);
-    expect(rcodeOf((await udpAsk(server.port, buildQuery('example.org', 1))) as Buffer)).toBe(RCODE.SERVFAIL);
+    expect(rcodeOf((await udpAsk(server.port, buildQuery('example.org', 1))) as Buffer)).toBe(
+      RCODE.SERVFAIL,
+    );
     expect(events).toEqual([{ kind: 'failed' }]);
   });
 });
@@ -316,7 +360,7 @@ describe('TCP', () => {
     const udp = (await udpAsk(server.port, buildQuery('big.example.org', TYPE.A, 9))) as Buffer;
     expect(udp.readUInt16BE(2) & 0x0200).toBe(0x0200); // TC passed through
     const [tcp] = await tcpAsk(server.port, [buildQuery('big.example.org', TYPE.A, 9)]);
-    expect(((tcp as Buffer).readUInt16BE(2) & 0x0200)).toBe(0);
+    expect((tcp as Buffer).readUInt16BE(2) & 0x0200).toBe(0);
     expect(rcodeOf(tcp as Buffer)).toBe(RCODE.NOERROR);
   });
 });
@@ -324,7 +368,8 @@ describe('TCP', () => {
 describe('changing what is blocked while running', () => {
   it('applies a new matcher to the next lookup (schedule edge, pass start or end)', async () => {
     const { server } = await start();
-    const ask = async () => rcodeOf((await udpAsk(server.port, buildQuery('x.reddit.com', 1))) as Buffer);
+    const ask = async () =>
+      rcodeOf((await udpAsk(server.port, buildQuery('x.reddit.com', 1))) as Buffer);
     expect(await ask()).toBe(RCODE.NXDOMAIN);
     server.setMatcher(new SuffixMatcher<Owner>({ block: [], allow: [] })); // a pass starts
     expect(await ask()).toBe(RCODE.NOERROR);
@@ -339,13 +384,25 @@ describe('lifecycle', () => {
     const port = server.port;
     expect(port).toBeGreaterThan(0);
     await server.close();
-    const again = await startDnsServer<Owner>({ address: '127.0.0.1', port, upstreams: [], matcher: matcher() });
+    const again = await startDnsServer<Owner>({
+      address: '127.0.0.1',
+      port,
+      upstreams: [],
+      matcher: matcher(),
+    });
     expect(again.port).toBe(port);
     await again.close();
   });
 
   it('fails cleanly when the port is taken', async () => {
     const { server } = await start();
-    await expect(startDnsServer<Owner>({ address: '127.0.0.1', port: server.port, upstreams: [], matcher: matcher() })).rejects.toThrow();
+    await expect(
+      startDnsServer<Owner>({
+        address: '127.0.0.1',
+        port: server.port,
+        upstreams: [],
+        matcher: matcher(),
+      }),
+    ).rejects.toThrow();
   });
 });

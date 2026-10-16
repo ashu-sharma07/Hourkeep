@@ -23,7 +23,11 @@ export const systemRunner: CommandRunner = {
   run: (command, args) =>
     new Promise((resolve) => {
       execFile(command, [...args], { timeout: 30_000 }, (err, stdout, stderr) => {
-        const code = err ? (typeof (err as { code?: unknown }).code === 'number' ? ((err as { code: number }).code) : 1) : 0;
+        const code = err
+          ? typeof (err as { code?: unknown }).code === 'number'
+            ? (err as { code: number }).code
+            : 1
+          : 0;
         resolve({ code, stdout: String(stdout), stderr: String(stderr) });
       });
     }),
@@ -44,7 +48,12 @@ export interface ResolverOptions {
 
 type Saved =
   | { readonly path: string; readonly kind: 'absent' }
-  | { readonly path: string; readonly kind: 'file'; readonly content: string; readonly mode: number }
+  | {
+      readonly path: string;
+      readonly kind: 'file';
+      readonly content: string;
+      readonly mode: number;
+    }
   | { readonly path: string; readonly kind: 'symlink'; readonly target: string };
 
 interface Backup {
@@ -54,7 +63,8 @@ interface Backup {
 }
 
 const MARK = '# Managed by hourkeepd. Removed by "hourkeepd --teardown".';
-const isLoopback = (a: string): boolean => /^127\./.test(a) || a === '::1' || a === '0.0.0.0' || a === '::';
+const isLoopback = (a: string): boolean =>
+  /^127\./.test(a) || a === '::1' || a === '0.0.0.0' || a === '::';
 
 /** Addresses from `nameserver` lines, without loopback or duplicates. */
 export function parseNameservers(text: string): string[] {
@@ -152,7 +162,8 @@ export class ResolverConfigurator {
     if (this.o.dryRun) return { strategy, changed: true };
 
     const paths = strategy === 'systemd-resolved' ? [this.dropIn] : [this.resolvConf];
-    if (!(await this.readBackup())) await this.writeBackup(strategy, await Promise.all(paths.map((p) => this.save(p))));
+    if (!(await this.readBackup()))
+      await this.writeBackup(strategy, await Promise.all(paths.map((p) => this.save(p))));
 
     if (strategy === 'systemd-resolved') {
       await fs.mkdir(path.dirname(this.dropIn), { recursive: true });
@@ -175,10 +186,13 @@ export class ResolverConfigurator {
     if (strategy === 'systemd-resolved') {
       const text = await readText(this.dropIn);
       if (text === null) return { ok: false, problem: 'the systemd-resolved drop-in is missing' };
-      return text === this.dropInContent() ? { ok: true } : { ok: false, problem: 'the systemd-resolved drop-in was changed' };
+      return text === this.dropInContent()
+        ? { ok: true }
+        : { ok: false, problem: 'the systemd-resolved drop-in was changed' };
     }
     const st = await lstat(this.resolvConf);
-    if (!st || st.isSymbolicLink()) return { ok: false, problem: 'resolv.conf is missing or was replaced' };
+    if (!st || st.isSymbolicLink())
+      return { ok: false, problem: 'resolv.conf is missing or was replaced' };
     const text = (await readText(this.resolvConf)) ?? '';
     const first = text.split('\n').find((l) => /^\s*nameserver\s/.test(l));
     return first?.trim() === `nameserver ${this.o.listen.address}` && text.startsWith(MARK)
@@ -244,13 +258,17 @@ export class ResolverConfigurator {
 
   private async writeBackup(strategy: ResolverStrategy, files: Saved[]): Promise<void> {
     await fs.mkdir(path.dirname(this.o.backupPath), { recursive: true, mode: 0o700 });
-    await atomicWriteFile(this.o.backupPath, JSON.stringify({ version: 1, strategy, files } satisfies Backup, null, 2));
+    await atomicWriteFile(
+      this.o.backupPath,
+      JSON.stringify({ version: 1, strategy, files } satisfies Backup, null, 2),
+    );
     await fs.chmod(this.o.backupPath, 0o600).catch(() => undefined);
   }
 
   private async reloadResolved(): Promise<void> {
     const r = await this.runner.run('systemctl', ['restart', 'systemd-resolved']);
-    if (r.code !== 0) throw new Error(`could not restart systemd-resolved: ${r.stderr.trim() || `exit ${r.code}`}`);
+    if (r.code !== 0)
+      throw new Error(`could not restart systemd-resolved: ${r.stderr.trim() || `exit ${r.code}`}`);
   }
 }
 

@@ -4,13 +4,13 @@ The wire protocol between `hourkeepd` and its clients: Zod schemas, framing and 
 
 Depends on `zod` (runtime validation of every message, required by the spec).
 
-## Protocol (version 2)
+## Protocol (version 3)
 
 Newline-delimited JSON over a Unix socket. Every message is at most 64 KiB; longer input is cut off with `too_large`.
 
-Request: `{ "v": 2, "id": "<1-64 chars>", "op": "<operation>", ...fields }`
+Request: `{ "v": 3, "id": "<1-64 chars>", "op": "<operation>", ...fields }`
 
-Response: `{ "v": 2, "id": "...", "ok": true, "data": ... }` or `{ ..., "ok": false, "error": { "code", "message" } }`
+Response: `{ "v": 3, "id": "...", "ok": true, "data": ... }` or `{ ..., "ok": false, "error": { "code", "message" } }`
 
 Operations:
 
@@ -28,7 +28,7 @@ Operations:
 
 A change outcome is `applied`, `noop`, or `pending` with the pending change (cooldown and expiry times, phase, attempts left). Tightening is applied at once; loosening is always `pending`. Challenges never contain the answer.
 
-All schemas are strict: unknown fields are rejected. A request with another `v` gets `unsupported_version`. Error codes: `bad_request`, `unsupported_version`, `too_large`, `invalid_target`, `invalid_value`, `not_found`, `cooldown_active`, `too_early`, `expired`, `limit_reached`, `internal`.
+All schemas are strict: unknown fields are rejected. A request with another `v` gets `unsupported_version`. Analytics are aggregated by the daemon; clients never see the database, and blocked lookups are counted per rule and matching suffix, never by the exact name looked up. Error codes: `bad_request`, `unsupported_version`, `too_large`, `invalid_target`, `invalid_value`, `not_found`, `cooldown_active`, `too_early`, `expired`, `limit_reached`, `internal`.
 
 ## Public API
 
