@@ -24,7 +24,10 @@ export interface DnsServerOptions<O> {
   readonly port: number;
   readonly upstreams: readonly Upstream[];
   readonly matcher: SuffixMatcher<O>;
-  /** Answered locally with 127.0.0.1; lets the daemon check the system really asks us. */
+  /**
+   * A domain (and everything under it) answered locally with 127.0.0.1. The daemon resolves
+   * a fresh name under it through the normal system path to check the system really asks us.
+   */
   readonly canary?: string;
   readonly onQuery?: (event: QueryEvent<O>) => void;
   readonly onError?: (error: unknown) => void;
@@ -161,7 +164,7 @@ export async function startDnsServer<O>(options: DnsServerOptions<O>): Promise<D
       emit({ kind: 'blocked', suffix: m.suffix, owner: m.owner, qtype: q.question.type });
       return buildNxdomain(packet, q);
     }
-    if (options.canary !== undefined && q.question.name === options.canary) {
+    if (options.canary !== undefined && (q.question.name === options.canary || q.question.name.endsWith(`.${options.canary}`))) {
       emit({ kind: 'canary' });
       return buildAnswerA(packet, q, '127.0.0.1');
     }

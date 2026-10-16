@@ -206,6 +206,16 @@ describe('counting is exact', () => {
 });
 
 describe('the self-test name', () => {
+  it('covers the domain and any name under it', async () => {
+    const { server, fake, events } = await start({ canary: 'selftest.hourkeep.dev' });
+    for (const name of ['selftest.hourkeep.dev', 'hk-12345.selftest.hourkeep.dev']) {
+      expect(answerIp((await udpAsk(server.port, buildQuery(name, TYPE.A))) as Buffer)).toBe('127.0.0.1');
+    }
+    await udpAsk(server.port, buildQuery('notselftest.hourkeep.dev', TYPE.A));
+    expect(fake.seen).toEqual(['notselftest.hourkeep.dev']);
+    expect(events.filter((e) => e.kind === 'canary')).toHaveLength(2);
+  });
+
   it('is answered locally with 127.0.0.1 and reported', async () => {
     const { server, fake, events } = await start({ canary: 'canary.hourkeep.invalid' });
     const r = (await udpAsk(server.port, buildQuery('canary.hourkeep.invalid', TYPE.A))) as Buffer;
